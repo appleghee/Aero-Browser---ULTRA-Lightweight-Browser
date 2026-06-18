@@ -161,14 +161,25 @@ func (vd *ValueDensityEngine) Scan() (*VDStats, error) {
 	return &vd.stats, nil
 }
 
+var (
+	mbCacheVal float64
+	mbCacheAt  time.Time
+)
+
 func memoryBudget() float64 {
+	if time.Since(mbCacheAt) < 30*time.Second {
+		return mbCacheVal
+	}
 	var m runtime.MemStats
 	runtime.ReadMemStats(&m)
 	totalGB := float64(m.TotalAlloc) / 1024 / 1024 / 1024
 	if totalGB < 1 {
-		return 200
+		mbCacheVal = 200
+	} else {
+		mbCacheVal = math.Min(400+totalGB*50, 1200)
 	}
-	return math.Min(400+totalGB*50, 1200)
+	mbCacheAt = time.Now()
+	return mbCacheVal
 }
 
 func (vd *ValueDensityEngine) evictLowValue() {

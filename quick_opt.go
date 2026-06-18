@@ -267,11 +267,7 @@ func (q *QuickOptEngine) InjectAll() {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 
-	q.b.syncExec(mddpJS)
-	q.b.syncExec(htpJS)
-	q.b.syncExec(psfqJS)
-	q.b.syncExec(daeJS)
-	q.b.syncExec(fdtfJS)
+	q.b.syncExec(mddpJS + htpJS + psfqJS + daeJS + fdtfJS)
 
 	q.mddpEnabled = true
 	q.htpEnabled = true
@@ -284,18 +280,58 @@ func (q *QuickOptEngine) GatherStats() *QuickOptStats {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 
-	statsMDDP := q.gatherMDDP()
-	statsHTP := q.gatherHTP()
-	statsPSFQ := q.gatherPSFQ()
-	statsDAE := q.gatherDAE()
-	statsFDTF := q.gatherFDTF()
+	var all struct {
+		MDDP struct {
+			DNSHits   int `json:"dnsHits"`
+			TCPHits   int `json:"tcpHits"`
+			CacheSize int `json:"cacheSize"`
+		} `json:"mddp"`
+		HTP struct {
+			Preconnects int `json:"preconnects"`
+			Hovers  int `json:"hovers"`
+		} `json:"htp"`
+		PSFQ struct {
+			Critical int `json:"critical"`
+			Total    int `json:"total"`
+		} `json:"psfq"`
+		DAE struct {
+			Decoded int `json:"decoded"`
+			Evicted int `json:"evicted"`
+		} `json:"dae"`
+		FDTF struct {
+			Swapped     int `json:"swapped"`
+			FontsLoaded int `json:"fontsLoaded"`
+		} `json:"fdtf"`
+	}
+	combinedJS := `(function(){
+		var r={};
+		var m=window.__mbMDDP||{};r.mddp={dnsHits:m._hits||0,tcpHits:m._tcp||0,cacheSize:Object.keys(m.cache||{}).length};
+		var h=window.__mbHTP||{};r.htp={preconnects:h._count||0,hovers:h._ok||0};
+		var p=window.__mbPSFQ||{};r.psfq={critical:p._queued||0,total:p._done||0};
+		var d=window.__mbDAE||{};r.dae={decoded:d._decoded||0,evicted:d._evicted||0};
+		var f=window.__mbFDTF||{};r.fdtf={swapped:f._swap||0,fontsLoaded:f._ready||0};
+		return r;
+	})()`
+	if err := q.b.syncUnwrapInto(combinedJS, 5*time.Second, &all); err == nil {
+		q.mddp.DNSHits = all.MDDP.DNSHits
+		q.mddp.TCPHits = all.MDDP.TCPHits
+		q.mddp.CacheHits = all.MDDP.CacheSize
+		q.htp.Preconnects = all.HTP.Preconnects
+		q.htp.Hovers = all.HTP.Hovers
+		q.psfq.Critical = all.PSFQ.Critical
+		q.psfq.Total = all.PSFQ.Total
+		q.dae.Decoded = all.DAE.Decoded
+		q.dae.Evicted = all.DAE.Evicted
+		q.fdtf.Swapped = all.FDTF.Swapped
+		q.fdtf.FontsLoaded = all.FDTF.FontsLoaded
+	}
 
 	return &QuickOptStats{
-		MDDP: statsMDDP,
-		HTP:  statsHTP,
-		PSFQ: statsPSFQ,
-		DAE:  statsDAE,
-		FDTF: statsFDTF,
+		MDDP: q.mddp,
+		HTP:  q.htp,
+		PSFQ: q.psfq,
+		DAE:  q.dae,
+		FDTF: q.fdtf,
 	}
 }
 

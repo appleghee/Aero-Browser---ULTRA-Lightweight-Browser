@@ -60,11 +60,11 @@ document.head.appendChild(_s);
 var _ov=document.createElement('div');_ov.id='__mb_overlay';
 _ov.innerHTML='<button id="__mb_ol_close">&times;</button><div id="__mb_overlay_inner">'+
 '<h2><s>&#9889;</s> Hyperspeed Browser</h2>'+
-'<input id="__mb_ol_search" placeholder="Nhap URL hoac tim kiem...">'+
+'<input id="__mb_ol_search" placeholder="Search URL or type...">'+
 '<div id="__mb_ol_nav"><button id="__mb_ol_b">&#8249; Back</button><button id="__mb_ol_f">Forward &#8250;</button><button id="__mb_ol_r">&#8635; Reload</button></div>'+
-'<div id="__mb_ol_section"><label>Che do toi uu</label><select id="__mb_ol_mode"><option value="turbo">Turbo</option><option value="aggressive">Aggressive</option><option value="speed">Speed</option><option value="balanced" selected>Balanced</option><option value="eco">Eco</option><option value="mobile">Mobile</option><option value="compat">Compat</option></select></div>'+
+'<div id="__mb_ol_section"><label>Optimizer mode</label><select id="__mb_ol_mode"><option value="turbo">Turbo</option><option value="aggressive">Aggressive</option><option value="speed">Speed</option><option value="balanced" selected>Balanced</option><option value="eco">Eco</option><option value="mobile">Mobile</option><option value="compat">Compat</option></select></div>'+
 '<div id="__mb_ol_toggles"><label><input type="checkbox" checked id="__mb_ol_ti">Lazy images</label><label><input type="checkbox" checked id="__mb_ol_tj">Defer JS</label><label><input type="checkbox" checked id="__mb_ol_tt">Block trackers</label><label><input type="checkbox" checked id="__mb_ol_tc">Smart cache</label></div>'+
-'<div id="__mb_ol_actions"><button id="__mb_ol_go">&#9654; Di den</button><button id="__mb_ol_opt">&#9889; Toi uu</button><button id="__mb_ol_snap">&#9776; Chup anh</button></div>'+
+'<div id="__mb_ol_actions"><button id="__mb_ol_go">&#9654; Go</button><button id="__mb_ol_opt">&#9889; Optimize</button><button id="__mb_ol_snap">&#9776; Snapshot</button></div>'+
 '<div id="__mb_ol_stats"><div><b id="__mb_ol_s">-</b><s>Score</s></div><div><b id="__mb_ol_l">-</b><s>Load(ms)</s></div><div><b id="__mb_ol_r2">-</b><s>Requests</s></div></div>'+
 '</div>';
 document.body.appendChild(_ov);
@@ -99,7 +99,7 @@ s.textContent='#__mb_bar{position:fixed;top:0;left:0;right:0;height:32px;z-index
 '#__mb_bar input{flex:1;height:24px;padding:0 8px;background:#2d2d2d;border:1px solid #444;border-radius:3px;color:#ddd;font-size:13px;outline:none;min-width:0}';
 document.head.appendChild(s);
 var d=document.createElement('div');d.id='__mb_bar';
-d.innerHTML='<button id="__mb_b">\u2039</button><button id="__mb_f">\u203A</button><button id="__mb_r">\u21bb</button><input id="__mb_u" placeholder="Nhap URL...">';
+d.innerHTML='<button id="__mb_b">\u2039</button><button id="__mb_f">\u203A</button><button id="__mb_r">\u21bb</button><input id="__mb_u" placeholder="URL...">';
 function appendBar(){var b=document.body||document.documentElement;if(b){b.insertBefore(d,b.firstChild)}else{requestAnimationFrame(appendBar)}}
 appendBar();
 function ns(){try{return JSON.parse(window.name||'{}')}catch(e){return{}}}
@@ -213,10 +213,8 @@ func main() {
 	<-apiReady
 	w.SetTitle(fmt.Sprintf("Hyperspeed Browser [:%d]", app.apiPort))
 
-	// Merge all JS injections into minimal calls (faster page init)
-	w.Init(fmt.Sprintf(`window.__mbPort=%d;window.__mbToken=%q;`, app.apiPort, app.apiToken))
-	w.Init(overlayJS + toolbarJS + runtimeJS + popupBlockerJS + optimizerInitJS)
-	w.Init(optimizerGUIJS)
+	// Single Init call — all JS merged
+	w.Init(fmt.Sprintf(`window.__mbPort=%d;window.__mbToken=%q;`, app.apiPort, app.apiToken) + overlayJS + toolbarJS + runtimeJS + popupBlockerJS + optimizerInitJS + optimizerGUIJS)
 	w.Navigate(app.curr)
 	go app.injectTurboLoop()
 	w.Run()
@@ -340,20 +338,13 @@ return nodes;
 // Optimizer GUI loaded via //go:embed optimizer-gui.js
 
 func (b *browser) injectTurboLoop() {
-	// inject with guard — only retry if document.head not ready
-	for i := 0; i < 3; i++ {
-		b.w.Dispatch(func() {
-			b.w.Eval(turboDOM)
-			b.w.Eval(spbUI)
-			b.w.Eval(spbUICode)
-		})
-		if i == 0 {
-			// After first attempt, wait longer for page to settle
-			time.Sleep(800 * time.Millisecond)
-		} else {
-			time.Sleep(400 * time.Millisecond)
-		}
-	}
+	// Single attempt — JS guards prevent re-execution
+	time.Sleep(100 * time.Millisecond)
+	b.w.Dispatch(func() {
+		b.w.Eval(turboDOM)
+		b.w.Eval(spbUI)
+		b.w.Eval(spbUICode)
+	})
 }
 
 // ---------------------------------------------------------------------------
@@ -416,6 +407,7 @@ func (b *browser) startAPI(ready chan<- struct{}) {
 	mux.HandleFunc("/api/opt/profile", b.handleOptimizerProfile)
 	mux.HandleFunc("/api/opt/run", b.handleOptimizerRunAll)
 	mux.HandleFunc("/api/opt/tune", b.handleOptimizerTune)
+	mux.HandleFunc("/api/opt/toggle", b.handleOptimizerToggle)
 
 	// PVDS endpoints
 	mux.HandleFunc("/api/vd/snapshot", b.handleVDSnapshot)

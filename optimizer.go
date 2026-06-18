@@ -388,7 +388,7 @@ var r=imgs[i].getBoundingClientRect();if(r.top<window.innerHeight+200)imgs[i].lo
 })()`
 
 // =============================================================================
-// 3. CompilerTuner - tối ưu trình biên dịch
+// 3. CompilerTuner
 // =============================================================================
 
 type CompilerTuner struct {
@@ -447,7 +447,7 @@ func TuneCompiler(profile string) {
 }
 
 // =============================================================================
-// 4. CSSJSOptimizer - nén và giảm tải CSS/JS động
+// 4. CSSJSOptimizer
 // =============================================================================
 
 type CSSJSOptimizer struct {
@@ -525,7 +525,7 @@ window.__mbMediaOptimized=imgs.length;
 })(),window.__mbMediaDone=1`
 
 // =============================================================================
-// 6. NetworkQueue - throttle mạng và hàng đợi request
+// 6. NetworkQueue
 // =============================================================================
 
 type Priority int
@@ -645,7 +645,7 @@ window.__mbNetThrottleActive=function(){return{active:active,pending:pending.len
 })(),window.__mbNetThrottleDone=1`
 
 // =============================================================================
-// 7. SmartCache - bộ nhớ cache thông minh
+// 7. SmartCache
 // =============================================================================
 
 type cacheEntry struct {
@@ -675,20 +675,26 @@ func NewSmartCache(maxEntries int, ttlMs int) *SmartCache {
 }
 
 func (sc *SmartCache) Get(key string) (interface{}, bool) {
-	sc.mu.Lock()
+	sc.mu.RLock()
 	entry, ok := sc.entries[key]
 	if !ok {
+		sc.mu.RUnlock()
+		sc.mu.Lock()
 		sc.misses++
 		sc.mu.Unlock()
 		return nil, false
 	}
 	if time.Since(entry.createdAt) > entry.ttl {
+		sc.mu.RUnlock()
+		sc.mu.Lock()
 		delete(sc.entries, key)
 		sc.evicted++
 		sc.mu.Unlock()
 		return nil, false
 	}
 	entry.hitCount++
+	sc.mu.RUnlock()
+	sc.mu.Lock()
 	sc.hits++
 	sc.mu.Unlock()
 	return entry.data, true
@@ -1049,6 +1055,49 @@ func (b *browser) handleOptimizerTune(w http.ResponseWriter, r *http.Request) {
 		"dataPoints":      len(allMetrics),
 		"autoTuneResults": results,
 	})
+}
+
+func (b *browser) handleOptimizerToggle(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "POST" {
+		writeError(w, 405, "POST required")
+		return
+	}
+	var body struct {
+		Key string      `json:"key"`
+		Val interface{} `json:"val"`
+	}
+	json.NewDecoder(r.Body).Decode(&body)
+	on := false
+	if v, ok := body.Val.(bool); ok {
+		on = v
+	}
+	switch body.Key {
+	case "lazyImages":
+		if on {
+			b.syncExec(mediaInject)
+		} else {
+			b.syncExec(`window.__mbMediaOpt=false;var _=document.querySelectorAll('img[loading=lazy]');for(var i=0;i<_.length;i++)_.item(i).removeAttribute('loading')`)
+		}
+	case "deferJS":
+		if on {
+			b.syncExec(jsDeferInject)
+		} else {
+			b.syncExec(`window.__mbJSDone=false`)
+		}
+	case "blockTrackers":
+		if on {
+			b.syncExec(networkThrottleJS)
+		} else {
+			b.syncExec(`window.fetch=window.__origFetch||window.fetch`)
+		}
+	case "smartCache":
+		if on {
+			b.syncExec(cacheInjectJS)
+		} else {
+			b.syncExec(`window.__mbCacheDone=false`)
+		}
+	}
+	writeJSON(w, map[string]interface{}{"ok": true})
 }
 
 func (b *browser) handleOptimizerRunAll(w http.ResponseWriter, r *http.Request) {

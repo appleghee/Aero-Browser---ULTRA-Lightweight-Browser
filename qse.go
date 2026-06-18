@@ -103,7 +103,7 @@ func (q *QSEEngine) GatherClickHeat() {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 	var clicks map[string]int
-	if err := q.b.syncUnwrapInto("(function(){var q=window.__mbQSE;if(!q)return{};try{return JSON.stringify(q.clicks);}catch(e){return'{}';};})()", 5*time.Second, &clicks); err != nil {
+	if err := q.b.syncUnwrapInto("(function(){var q=window.__mbQSE;if(!q)return{};try{return q.clicks;}catch(e){return{};};})()", 5*time.Second, &clicks); err != nil {
 		return
 	}
 	for d, c := range clicks {
