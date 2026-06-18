@@ -1,6 +1,5 @@
 *.exe
 *.exe~
-*.syso
 *.test
 *.out
 *.db
