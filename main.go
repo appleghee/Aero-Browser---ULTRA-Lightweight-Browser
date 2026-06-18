@@ -40,12 +40,17 @@ s.textContent='#__mb_sbar{position:fixed;top:0;left:0;width:100%;height:100%;z-i
 '#__mb_sbar_inner .hint{color:#888;font-size:11px;margin-top:8px;text-align:center}';
 document.head.appendChild(s);
 var d=document.createElement('div');d.id='__mb_sbar';
-d.innerHTML='<div id="__mb_sbar_inner"><input id="__mb_sbar_inp" placeholder="Search Google..."><div class="hint">Ctrl+Shift+L to open</div></div>';
-document.body.appendChild(d);
+d.innerHTML='<div id="__mb_sbar_inner"><input id="__mb_sbar_inp" placeholder="Search Google..."><div class="hint">Ctrl+Shift+L</div></div>';
+function addSearchBar(){if(document.body){document.body.appendChild(d);setupSearchBar()}else{requestAnimationFrame(addSearchBar)}}
+function setupSearchBar(){
 var inp=document.getElementById('__mb_sbar_inp');
-inp.onkeydown=function(e){if(e.key=="Enter"){var v=this.value.trim();if(v){window.goNavigate("https://www.google.com/search?q="+encodeURIComponent(v));d.classList.remove('show')}}};
+if(!inp){setTimeout(setupSearchBar,50);return}
+inp.onkeydown=function(e){if(e.key=='Enter'){var v=this.value.trim();if(v){window.goNavigate('https://www.google.com/search?q='+encodeURIComponent(v));d.classList.remove('show')}}};
 d.onclick=function(e){if(e.target===d)d.classList.remove('show')};
-document.addEventListener("keydown",function(e){if(e.ctrlKey&&e.shiftKey&&e.code==="KeyL"){e.preventDefault();d.classList.toggle('show');if(d.classList.contains('show'))setTimeout(function(){inp.focus();inp.select()},100)}});
+window.__mbSearchReady=true;
+}
+addSearchBar();
+document.addEventListener("keydown",function(e){if(e.ctrlKey&&e.shiftKey&&e.code==="KeyL"){e.preventDefault();d.classList.toggle('show');if(d.classList.contains('show')){var i=document.getElementById('__mb_sbar_inp');if(i){i.focus();i.select()}}}});
 })();`
 
 // minimized toolbar JS (~1KB)
