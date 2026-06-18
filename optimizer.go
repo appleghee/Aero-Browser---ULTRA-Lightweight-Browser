@@ -42,6 +42,7 @@ type Optimizer struct {
 	uhe        *UHEngine
 	ndf        *NDFCache
 	autotune   *AutoTuneUHE
+	gcctl      *AdaptiveGCController
 }
 
 type OptimizerProfile struct {
@@ -195,9 +196,11 @@ func NewOptimizer(b *browser) *Optimizer {
 		uhe:        NewUHEngine(),
 		ndf:        NewNDFCache(128),
 		autotune:   NewAutoTuneUHE(),
+		gcctl:      NewAdaptiveGCController(),
 	}
 	o.netq.maxConcurrent = defaultProfile.NetworkMaxConcurrent
 	o.autotune.Start()
+	o.gcctl.Start()
 	return o
 }
 
@@ -589,6 +592,10 @@ type NetworkQueue struct {
 	totalQueued    int
 	totalDropped   int
 	blockedDomains []string
+	
+	// Request coalescing
+	inflight map[string][]*RequestItem  // URL → waiting requests
+	coalesced int
 }
 
 func NewNetworkQueue(b *browser) *NetworkQueue {
@@ -597,6 +604,7 @@ func NewNetworkQueue(b *browser) *NetworkQueue {
 		queue:         make(PriorityQueue, 0),
 		maxConcurrent: 6,
 		blockedDomains: []string{},
+		inflight:      make(map[string][]*RequestItem),
 	}
 }
 
@@ -620,6 +628,17 @@ func (nq *NetworkQueue) Enqueue(url, method string, priority Priority) {
 		CreatedAt: time.Now(),
 	}
 	nq.totalQueued++
+	
+	// Check if request already in-flight for this URL
+	if waiters, ok := nq.inflight[url]; ok {
+		// Piggyback on in-flight request
+		nq.inflight[url] = append(waiters, item)
+		nq.coalesced++
+		return
+	}
+	
+	// New request: mark as in-flight and queue
+	nq.inflight[url] = []*RequestItem{item}
 	heap.Push(&nq.queue, item)
 }
 
@@ -632,6 +651,8 @@ func (nq *NetworkQueue) Stats() map[string]interface{} {
 		"maxConcurrent": nq.maxConcurrent,
 		"totalQueued":   nq.totalQueued,
 		"totalDropped":  nq.totalDropped,
+		"coalesced":     nq.coalesced,
+		"savings":       fmt.Sprintf("%d requests", nq.coalesced),
 	}
 }
 
@@ -663,6 +684,8 @@ type cacheEntry struct {
 	createdAt time.Time
 	ttl       time.Duration
 	hitCount  int
+	lastAccess time.Time  // K=1: most recent access
+	kthAccess  time.Time  // K=2: 2nd most recent access (LRU-K)
 }
 
 type SmartCache struct {
@@ -702,6 +725,11 @@ func (sc *SmartCache) Get(key string) (interface{}, bool) {
 		return nil, false
 	}
 	entry.hitCount++
+	// Track K-th access time for LRU-K eviction
+	if !entry.lastAccess.IsZero() {
+		entry.kthAccess = entry.lastAccess
+	}
+	entry.lastAccess = time.Now()
 	sc.mu.RUnlock()
 	sc.mu.Lock()
 	sc.hits++
@@ -718,26 +746,38 @@ func (sc *SmartCache) Set(key string, data interface{}, size int) {
 	}
 
 	sc.entries[key] = &cacheEntry{
-		data:      data,
-		size:      size,
-		createdAt: time.Now(),
-		ttl:       sc.ttl,
+		data:       data,
+		size:       size,
+		createdAt:  time.Now(),
+		ttl:        sc.ttl,
+		lastAccess: time.Now(),
+		kthAccess:  time.Time{},  // Not set until 2nd access
 	}
 }
 
 func (sc *SmartCache) evictOldest() {
-	var oldestKey string
-	var oldestTime time.Time
+	// LRU-K eviction: evict entry with oldest K-th access time
+	// K=2: use 2nd most recent access (or createdAt if <2 accesses)
+	var victimKey string
+	var victimRefTime time.Time
 	first := true
+	
 	for k, v := range sc.entries {
-		if first || v.createdAt.Before(oldestTime) {
-			oldestKey = k
-			oldestTime = v.createdAt
+		// Choose reference time: kthAccess if set, else createdAt
+		refTime := v.kthAccess
+		if refTime.IsZero() {
+			refTime = v.createdAt
+		}
+		
+		if first || refTime.Before(victimRefTime) {
+			victimKey = k
+			victimRefTime = refTime
 			first = false
 		}
 	}
-	if oldestKey != "" {
-		delete(sc.entries, oldestKey)
+	
+	if victimKey != "" {
+		delete(sc.entries, victimKey)
 		sc.evicted++
 		// Batch evict expired entries too during scan
 		now := time.Now()

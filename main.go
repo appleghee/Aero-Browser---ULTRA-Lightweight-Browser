@@ -437,6 +437,9 @@ func (b *browser) startAPI(ready chan<- struct{}) {
 	mux.HandleFunc("/api/autotune/profiles", b.handleAutoTuneProfiles)
 	mux.HandleFunc("/api/autotune/metrics", b.handleAutoTuneMetrics)
 
+	// GC Controller endpoints
+	mux.HandleFunc("/api/gc/stats", b.handleGCStats)
+
 	mux.HandleFunc("/api/uhe/start", b.handleUHEStart)
 	mux.HandleFunc("/api/uhe/stats", b.handleUHEStats)
 	mux.HandleFunc("/api/uhe/access", b.handleUHEAccess)
@@ -1061,6 +1064,15 @@ func (b *browser) handleAutoTuneMetrics(w http.ResponseWriter, r *http.Request) 
 	b.opt.autotune.RecordMetrics(req.Domain, req.CPU, req.Memory, req.Network)
 	rec := b.opt.autotune.Recommend(req.Domain)
 	writeJSON(w, map[string]interface{}{"ok": true, "recommendation": rec})
+}
+
+func (b *browser) handleGCStats(w http.ResponseWriter, r *http.Request) {
+	if b.opt == nil || b.opt.gcctl == nil {
+		writeError(w, 503, "GC controller not init")
+		return
+	}
+	stats := b.opt.gcctl.Stats()
+	writeJSON(w, map[string]interface{}{"ok": true, "stats": stats})
 }
 
 func normalizeURL(raw string) *url.URL {
