@@ -58,11 +58,11 @@ var defaultProfile = OptimizerProfile{
 	CacheMaxEntries:      200,
 	CacheTTLMs:           60000,
 	NetworkMaxConcurrent: 6,
-	LazyLoadImages:       true,
-	DeferNonCriticalCSS:  true,
-	DeferNonCriticalJS:   true,
-	RemoveTracking:       true,
-	AutoTuneEnabled:      true,
+	LazyLoadImages:       false,
+	DeferNonCriticalCSS:  false,
+	DeferNonCriticalJS:   false,
+	RemoveTracking:       false,
+	AutoTuneEnabled:      false,
 }
 
 var speedProfile = OptimizerProfile{
@@ -403,12 +403,7 @@ return JSON.stringify(res)})()`
 
 func NewResourceClassifier() *ResourceClassifier {
 	return &ResourceClassifier{
-		trackerDomains: []string{
-			"google-analytics", "googletagmanager", "facebook.net",
-			"doubleclick", "hotjar", "mouseflow", "fullstory",
-			"amplitude", "mixpanel", "clarity.ms",
-			"adsystem", "adservice", "scorecardresearch",
-		},
+		trackerDomains: []string{"doubleclick.net", "googletagmanager.com/gtm"},
 	}
 }
 
@@ -657,10 +652,7 @@ func NewNetworkQueue(b *browser) *NetworkQueue {
 		b:             b,
 		queue:         make(PriorityQueue, 0),
 		maxConcurrent: 6,
-		blockedDomains: []string{
-			"google-analytics.com", "googletagmanager.com",
-			"doubleclick.net", "facebook.net",
-		},
+		blockedDomains: []string{},
 	}
 }
 
