@@ -355,6 +355,14 @@ func (b *browser) startAPI(ready chan<- struct{}) {
 	mux.HandleFunc("/api/quick/inject", b.handleQuickOptInject)
 	mux.HandleFunc("/api/quick/stats", b.handleQuickOptStats)
 
+	// RHD-GC endpoints
+	mux.HandleFunc("/api/rhd/start", b.handleRHDGCStart)
+	mux.HandleFunc("/api/rhd/stats", b.handleRHDGCStats)
+
+	// PVC endpoints
+	mux.HandleFunc("/api/pvc/start", b.handlePVCStart)
+	mux.HandleFunc("/api/pvc/stats", b.handlePVCStats)
+
 	b.srv = &http.Server{Handler: corsMiddleware(authMiddleware(b, mux))}
 	b.srv.Serve(listener)
 }

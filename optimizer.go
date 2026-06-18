@@ -34,6 +34,8 @@ type Optimizer struct {
 	vd         *ValueDensityEngine
 	crg        *CRGEngine
 	quick      *QuickOptEngine
+	rhd        *RHDGCEngine
+	pvc        *PVCEngine
 }
 
 type OptimizerProfile struct {
@@ -179,6 +181,8 @@ func NewOptimizer(b *browser) *Optimizer {
 		vd:         NewValueDensityEngine(b),
 		crg:        NewCRGEngine(b),
 		quick:      NewQuickOptEngine(b),
+		rhd:        NewRHDGCEngine(b),
+		pvc:        NewPVCEngine(b),
 	}
 	o.netq.maxConcurrent = defaultProfile.NetworkMaxConcurrent
 	return o

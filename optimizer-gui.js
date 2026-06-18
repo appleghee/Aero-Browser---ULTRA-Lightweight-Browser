@@ -83,6 +83,12 @@
     '<div class="opt-stat" style="margin-top:2px"><div><b id="__mb_q_dae">-</b><s>DAE</s></div><div><b id="__mb_q_fdtf">-</b><s>FDTF</s></div><div><b id="__mb_q_s">-</b><s>Status</s></div></div>' +
     '<div class="opt-act"><button class="opt-btn opt-btn-p" id="__mb_q_inj">\u25b6 Inject</button>' +
     '<button class="opt-btn opt-btn-s" id="__mb_q_st">\u2139 Stats</button></div></div>' +
+    '<div class="opt-g" style="border-top:1px solid rgba(255,255,255,0.06);padding-top:5px"><div class="opt-gl">\u267b RHD-GC + PVC</div>' +
+    '<div class="opt-stat"><div><b id="__mb_rhd_d">-</b><s>Detach</s></div><div><b id="__mb_rhd_f">-</b><s>Frozen</s></div><div><b id="__mb_rhd_x">-</b><s>Destroy</s></div></div>' +
+    '<div class="opt-stat" style="margin-top:2px"><div><b id="__mb_pvc_f">-</b><s>Full</s></div><div><b id="__mb_pvc_s">-</b><s>Skel</s></div><div><b id="__mb_pvc_c">-</b><s>Coll</s></div></div>' +
+    '<div class="opt-act"><button class="opt-btn opt-btn-p" id="__mb_rhd_start">\u25b6 Start</button>' +
+    '<button class="opt-btn opt-btn-s" id="__mb_pvc_start">\u25b6 PVC</button>' +
+    '<button class="opt-btn opt-btn-s" id="__mb_rhd_st">\u2139</button></div></div>' +
     "</div></div></div>";
   document.body.appendChild(p);
   var port = window.__mbPort || 0;
@@ -258,6 +264,31 @@
       }
     });
   }
+  function rhdStats() {
+    api("GET", "/api/rhd/stats").then(function (d) {
+      if (d && d.stats) {
+        var s = d.stats;
+        document.getElementById("__mb_rhd_d").textContent = s.detached;
+        document.getElementById("__mb_rhd_f").textContent = s.frozen;
+        document.getElementById("__mb_rhd_x").textContent = s.destroyed;
+      }
+    });
+    api("GET", "/api/pvc/stats").then(function (d) {
+      if (d && d.stats) {
+        var s = d.stats;
+        document.getElementById("__mb_pvc_f").textContent = s.full;
+        document.getElementById("__mb_pvc_s").textContent = s.skeleton;
+        document.getElementById("__mb_pvc_c").textContent = s.collapsed;
+      }
+    });
+  }
+  document.getElementById("__mb_rhd_start").onclick = function() {
+    api("POST", "/api/rhd/start").then(function(d) { if(d && d.ok) rhdStats(); });
+  };
+  document.getElementById("__mb_pvc_start").onclick = function() {
+    api("POST", "/api/pvc/start").then(function(d) { if(d && d.ok) rhdStats(); });
+  };
+  document.getElementById("__mb_rhd_st").onclick = rhdStats;
   document.getElementById("__mb_q_inj").onclick = qInject;
   document.getElementById("__mb_q_st").onclick = qStats;
   document.getElementById("__mb_crg_scan").onclick = crgScan;
@@ -267,7 +298,8 @@
   document.getElementById("__mb_script_save").onclick = saveScript;
   window.__mbRunCustomScript = runScript;
   bg("balanced");
-  qInject();
+  qInject(); rhdStats();
+  api("POST", "/api/rhd/start"); api("POST", "/api/pvc/start");
   window.__mbOptGUI = true;
 })();
 (function () {
