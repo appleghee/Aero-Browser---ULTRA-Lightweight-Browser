@@ -68,6 +68,44 @@ Value Density (VD) = UserVisibleValue / ResourceCost
 
 ---
 
+## CRG: Computational Reuse Graph
+
+Most browsers re-parse, re-style, and re-layout the same DOM every navigation. CRG caches **computation results** (not files), keyed by **Computation Fingerprint**: a hash of (tag path + child count + attributes + text length + depth).
+
+### Pipeline
+
+| Step | Description |
+|------|-------------|
+| **Fingerprint** | Every DOM subtree gets a `data-crg-fp` hash (8-char hex). Identical subtrees → identical hash |
+| **Mutation Observer** | Monitors class/style/src/href changes; marks affected subtrees `data-crg-stale="1"` |
+| **Cache** | Subtree outerHTML + timestamp stored in `localStorage.__crg_cache` (LRU, max 500 entries) |
+| **Graph Diff** | Only stale/fingerprint-changed subtrees need recomputation; the rest is **reused** |
+| **Reuse** | On navigation back or SPA pushState, cached subtrees restored without re-layout |
+
+### Impact
+
+CRG converts per-navigation full-recalc into **targeted patch**:
+- 95% identical DOM → **zero recomputation** for 95% of nodes
+- 1 button text change → **1 node invalidated**, rest reused
+- Back/forward navigation → **instant restore** from cached fingerprint graph
+
+### Cache Overhead
+
+| Metric | Value |
+|--------|-------|
+| Cache limit | 500 subtrees (oldest evicted) |
+| Max subtree | 50 KB serialized |
+| Storage | localStorage (survives restarts) |
+
+### API
+
+| Endpoint | Description |
+|----------|-------------|
+| `GET /api/crg/snapshot` | CRG stats: hits, misses, reused nodes, stale nodes, total time saved |
+| `POST /api/crg/optimize` | Run CRG scan + cache + reuse pipeline |
+
+---
+
 ## Performance
 
 | Metric | Value |

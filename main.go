@@ -347,6 +347,10 @@ func (b *browser) startAPI(ready chan<- struct{}) {
 	mux.HandleFunc("/api/vd/snapshot", b.handleVDSnapshot)
 	mux.HandleFunc("/api/vd/optimize", b.handleVDOptimize)
 
+	// CRG endpoints
+	mux.HandleFunc("/api/crg/snapshot", b.handleCRGSnapshot)
+	mux.HandleFunc("/api/crg/optimize", b.handleCRGOptimize)
+
 	b.srv = &http.Server{Handler: corsMiddleware(authMiddleware(b, mux))}
 	b.srv.Serve(listener)
 }

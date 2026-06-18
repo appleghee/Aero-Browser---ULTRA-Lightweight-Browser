@@ -73,6 +73,11 @@
     '<div class="opt-stat" style="margin-top:2px"><div><b id="__mb_vd_mem">-</b><s>Mem MB</s></div><div><b id="__mb_vd_bud">-</b><s>Budget</s></div><div><b id="__mb_vd_frz">-</b><s>Frozen</s></div></div>' +
     '<div class="opt-act"><button class="opt-btn opt-btn-s2" id="__mb_vd_scan">\u25b6 Scan</button>' +
     '<button class="opt-btn opt-btn-s" id="__mb_vd_opt">\u26a1 Schedule</button></div></div>' +
+    '<div class="opt-g" style="border-top:1px solid rgba(255,255,255,0.06);padding-top:5px"><div class="opt-gl">CRG Reuse Graph</div>' +
+    '<div class="opt-stat"><div><b id="__mb_crg_h">-</b><s>Hits</s></div><div><b id="__mb_crg_m">-</b><s>Miss</s></div><div><b id="__mb_crg_s">-</b><s>Saved</s></div></div>' +
+    '<div class="opt-stat" style="margin-top:2px"><div><b id="__mb_crg_r">-</b><s>Reused</s></div><div><b id="__mb_crg_st">-</b><s>Stale</s></div><div><b id="__mb_crg_c">-</b><s>Cached</s></div></div>' +
+    '<div class="opt-act"><button class="opt-btn opt-btn-s2" id="__mb_crg_scan">\u25b6 Scan</button>' +
+    '<button class="opt-btn opt-btn-s" id="__mb_crg_opt">\u267b Cache</button></div></div>' +
     "</div></div></div>";
   document.body.appendChild(p);
   var port = window.__mbPort || 0;
@@ -140,7 +145,7 @@
           m.requestCount || "-";
       }
     });
-    vdScan();
+    vdScan();crgScan();
   }
   document.getElementById("__mb_opt_m").onclick = rs;
   document.getElementById("__mb_opt_x").onclick = function () {
@@ -204,6 +209,26 @@
       if (d && d.stats) vdScan();
     });
   }
+  function crgScan() {
+    api("GET", "/api/crg/snapshot").then(function (d) {
+      if (d && d.stats) {
+        var s = d.stats;
+        document.getElementById("__mb_crg_h").textContent = s.cacheHits;
+        document.getElementById("__mb_crg_m").textContent = s.cacheMisses;
+        document.getElementById("__mb_crg_s").textContent = s.totalSaved;
+        document.getElementById("__mb_crg_r").textContent = s.reusedNodes;
+        document.getElementById("__mb_crg_st").textContent = s.staleNodes;
+        document.getElementById("__mb_crg_c").textContent = s.cacheSize;
+      }
+    });
+  }
+  function crgOpt() {
+    api("POST", "/api/crg/optimize").then(function (d) {
+      if (d && d.stats) crgScan();
+    });
+  }
+  document.getElementById("__mb_crg_scan").onclick = crgScan;
+  document.getElementById("__mb_crg_opt").onclick = crgOpt;
   document.getElementById("__mb_vd_scan").onclick = vdScan;
   document.getElementById("__mb_vd_opt").onclick = vdOpt;
   document.getElementById("__mb_script_save").onclick = saveScript;
