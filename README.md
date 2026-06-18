@@ -68,11 +68,7 @@ Full API docs at `GET /api` when the browser is running.
 ├── optimizer.go         # Performance engine (8 subsystems)
 ├── optimizer-gui.js     # Floating control panel (injected at runtime)
 ├── popup-blocker.js     # Popup blocker script
-├── deepseek-browser/    # DeepSeek-dedicated variant
-│   └── main.go
 ├── check_state.py       # Python inspector (auto-detect port)
-├── deepseek_snap.py     # DeepSeek login inspector
-└── demo.py              # DOM node printer
 ```
 
 ## Python Scripts
@@ -81,7 +77,6 @@ Python tools auto-detect the API port from `%TEMP%\hyperspeed-browser.port`:
 
 ```bash
 python check_state.py    # Snapshot + clickable elements + storage + cookies
-python deepseek_snap.py  # DeepSeek login state inspection
 ```
 
 ## License
