@@ -200,6 +200,9 @@ func NewOptimizer(b *browser) *Optimizer {
 		gcctl:      NewAdaptiveGCController(),
 		hlrc:       NewHLRC(),
 	}
+	o.uhe.SetHLRC(o.hlrc)
+	o.ndf.SetHLRC(o.hlrc)
+	o.cache.SetHLRC(o.hlrc)
 	o.netq.maxConcurrent = defaultProfile.NetworkMaxConcurrent
 	o.autotune.Start()
 	o.gcctl.Start()
@@ -701,7 +704,10 @@ type SmartCache struct {
 	hits    int64
 	misses  int64
 	evicted int64
+	hlrc    *HLRC
 }
+
+func (sc *SmartCache) SetHLRC(h *HLRC) { sc.hlrc = h }
 
 func NewSmartCache(maxEntries int, ttlMs int) *SmartCache {
 	return &SmartCache{
@@ -731,6 +737,9 @@ func (sc *SmartCache) Get(key string) (interface{}, bool) {
 	}
 	entry.lastAccess = time.Now()
 	sc.hits++
+	if sc.hlrc != nil {
+		sc.hlrc.Access(key)
+	}
 	return entry.data, true
 }
 
@@ -749,6 +758,10 @@ func (sc *SmartCache) Set(key string, data interface{}, size int) {
 		ttl:        sc.ttl,
 		lastAccess: time.Now(),
 		kthAccess:  time.Time{},  // Not set until 2nd access
+	}
+	if sc.hlrc != nil {
+		sc.hlrc.Register(key, HLRCKindCache, uint32(size/1024))
+		sc.hlrc.Access(key)
 	}
 }
 

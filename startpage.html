@@ -66,6 +66,16 @@ h1 small{font-size:11px;color:#484f58;font-weight:400}
     </div>
   </div>
 
+  <div class="stats">
+    <h2>HLRC Runtime Core</h2>
+    <div class="stat-row" id="hlrcStats">
+      <div class="stat-item"><div class="val" id="hlrcObj">-</div><div class="lbl">Objects</div></div>
+      <div class="stat-item"><div class="val" id="hlrcDem">-</div><div class="lbl">Demotions</div></div>
+      <div class="stat-item"><div class="val" id="hlrcRAM">-</div><div class="lbl">RAM MB</div></div>
+      <div class="stat-item"><div class="val" id="hlrcLOD">-</div><div class="lbl">LOD0</div></div>
+    </div>
+  </div>
+
   <div class="actions">
     <button id="toggleLOD" class="on">DOM LOD: ON</button>
   </div>
@@ -131,9 +141,25 @@ document.getElementById('toggleLOD').onclick=function(){
   fetch('/api/lod/toggle',{method:'POST',headers:{'Content-Type':'application/json','X-API-Token':window.__mbToken||''},body:JSON.stringify({action:'toggle'})})['catch'](function(){});
 };
 
+function fetchHLRCStats(){
+  fetch('/api/hlrc/stats',{headers:{'X-API-Token':window.__mbToken||''}})
+    .then(function(r){return r.json()})
+    .then(function(d){
+      if(d.ok&&d.stats){
+        var s=d.stats;
+        document.getElementById('hlrcObj').textContent=s.objects||0;
+        document.getElementById('hlrcDem').textContent=s.demotions||0;
+        document.getElementById('hlrcRAM').textContent=s.ramUsedMB+'/'+s.ramBudgetMB;
+        document.getElementById('hlrcLOD').textContent=(s.lodCounts&&s.lodCounts[0])||0;
+      }
+    })['catch'](function(){});
+}
+
 updateNav();
 fetchStats();
+fetchHLRCStats();
 setInterval(fetchStats,3000);
+setInterval(fetchHLRCStats,3000);
 
 // Search overlay toggle
 var sbar=document.getElementById('__mb_sbar'),sbarInp=document.getElementById('__mb_sbar_inp');
@@ -153,7 +179,7 @@ document.addEventListener('keydown',function(e){
     }
   }
   if(e.ctrlKey&&e.shiftKey&&e.code==='KeyH'){e.preventDefault();
-    window.goNavigate('hyperspeed://console')
+    fetch('/api/navigate',{method:'POST',headers:{'Content-Type':'application/json','X-API-Token':window.__mbToken||''},body:'{"url":"hyperspeed://console"}'})['catch'](function(){})
   }
 });
 

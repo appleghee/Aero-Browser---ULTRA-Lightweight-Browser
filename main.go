@@ -54,7 +54,7 @@ window.__mbSearchReady=true;
 }
 addSearchBar();
 document.addEventListener("keydown",function(e){if(e.ctrlKey&&e.shiftKey&&e.code==="KeyL"){e.preventDefault();d.classList.toggle('show');if(d.classList.contains('show')){var i=document.getElementById('__mb_sbar_inp');if(i){i.focus();i.select()}}}});
-document.addEventListener("keydown",function(e){if(e.ctrlKey&&e.shiftKey&&e.code==="KeyH"){e.preventDefault();window.goNavigate('hyperspeed://console')}});
+document.addEventListener("keydown",function(e){if(e.ctrlKey&&e.shiftKey&&e.code==="KeyH"){e.preventDefault();var t=window.__mbToken||"";fetch('/api/navigate',{method:'POST',headers:{'Content-Type':'application/json','X-API-Token':t},body:'{"url":"hyperspeed://console"}'})['catch'](function(){})}});
 })();`
 
 // minimized toolbar JS (~1KB)

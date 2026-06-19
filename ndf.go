@@ -16,7 +16,10 @@ type NDFCache struct {
 	entries  map[string]*NDFEntry
 	maxSize  int64
 	currSize int64
+	hlrc     *HLRC
 }
+
+func (n *NDFCache) SetHLRC(h *HLRC) { n.hlrc = h }
 
 type NDFEntry struct {
 	URL          string
@@ -84,6 +87,9 @@ func (n *NDFCache) Fetch(url string, onData func([]byte, bool) error) (*NDFEntry
 				e.Accesses++
 				e.LastAccess = time.Now()
 				e.HitCount++
+				if n.hlrc != nil {
+					n.hlrc.Access(url)
+				}
 				if onData != nil {
 					onData(e.Data, true)
 				}
@@ -139,6 +145,11 @@ func (n *NDFCache) Fetch(url string, onData func([]byte, bool) error) (*NDFEntry
 			LastAccess:   time.Now(),
 			Created:      time.Now(),
 			HitCount:     0,
+		}
+		if n.hlrc != nil {
+			n.hlrc.Register(url, HLRCKindCache, uint32(len(data)/1024))
+			n.hlrc.UpdateCosts(url, 0.7, 0.5, int64(len(data)), 10, 0, int64(len(data)))
+			n.hlrc.Access(url)
 		}
 		if exists {
 			n.currSize -= existing.Size

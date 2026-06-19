@@ -30,6 +30,7 @@ type UHEngine struct {
 	hotThresh  float64
 	stopCh     chan struct{}
 	stats      UHEStats
+	hlrc       *HLRC
 }
 
 type UHEStats struct {
@@ -64,6 +65,8 @@ func NewUHEngine() *UHEngine {
 		enabled:    true,
 	}
 }
+
+func (u *UHEngine) SetHLRC(h *HLRC) { u.hlrc = h }
 
 func (u *UHEngine) Start() {
 	u.mu.Lock()
@@ -136,10 +139,20 @@ func (u *UHEngine) Access(key, kind string) {
 			Created:    time.Now(),
 		}
 		u.entries[key] = e
+		if u.hlrc != nil {
+			rc := uint32(50)
+			if kind == "dom" {
+				rc = 100
+			}
+			u.hlrc.Register(key, kind, rc)
+		}
 	}
 	e.Heat = min(u.maxHeat, e.Heat+u.accessHeat)
 	e.Accesses++
 	e.LastAccess = time.Now()
+	if u.hlrc != nil {
+		u.hlrc.Access(key)
+	}
 }
 
 func (u *UHEngine) getHeat(key string) float64 {
