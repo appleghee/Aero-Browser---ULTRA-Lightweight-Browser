@@ -287,7 +287,8 @@ if(scripts>25)score-=5;
 if(nodes>2000)score-=10;
 if(errs>0)score-=errs*3;
 if(score<10)score=10;
-return({
+}
+var m={
 loadTimeMs:(t.loadEventEnd-t.navigationStart)||0,
 domReadyMs:(t.domContentLoadedEventEnd-t.navigationStart)||0,
 firstPaintMs:p.getEntriesByType('paint').length?p.getEntriesByType('paint')[0].startTime:0,
@@ -301,7 +302,9 @@ errorCount:errs,
 memoryUsageMB:Math.round(mem*10)/10,
 domNodeCount:nodes,
 score:Math.max(10,Math.min(100,score))
-})})(),window.__lastMetrics=this`
+};
+window.__lastMetrics=m;
+return m;`
 
 func NewMetricsCollector(b *browser) *MetricsCollector {
 	return &MetricsCollector{b: b, history: make([]PageMetrics, 0, 50)}
@@ -707,33 +710,25 @@ func NewSmartCache(maxEntries int, ttlMs int) *SmartCache {
 }
 
 func (sc *SmartCache) Get(key string) (interface{}, bool) {
-	sc.mu.RLock()
+	sc.mu.Lock()
+	defer sc.mu.Unlock()
+
 	entry, ok := sc.entries[key]
 	if !ok {
-		sc.mu.RUnlock()
-		sc.mu.Lock()
 		sc.misses++
-		sc.mu.Unlock()
 		return nil, false
 	}
 	if time.Since(entry.createdAt) > entry.ttl {
-		sc.mu.RUnlock()
-		sc.mu.Lock()
 		delete(sc.entries, key)
 		sc.evicted++
-		sc.mu.Unlock()
 		return nil, false
 	}
 	entry.hitCount++
-	// Track K-th access time for LRU-K eviction
 	if !entry.lastAccess.IsZero() {
 		entry.kthAccess = entry.lastAccess
 	}
 	entry.lastAccess = time.Now()
-	sc.mu.RUnlock()
-	sc.mu.Lock()
 	sc.hits++
-	sc.mu.Unlock()
 	return entry.data, true
 }
 

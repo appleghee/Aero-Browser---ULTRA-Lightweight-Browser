@@ -153,8 +153,8 @@ func (agc *AdaptiveGCController) setDynamicMemoryLimit() {
 	var m runtime.MemStats
 	runtime.ReadMemStats(&m)
 	
-	// Dynamic limit = 40% of TotalSys, but not less than 96MB
-	proposed := int64(m.TotalAlloc) * 2
+	// Dynamic limit = 40% of system memory obtained from OS, not less than 96MB
+	proposed := int64(m.Sys) / 100 * 40
 	if proposed < 96*1024*1024 {
 		proposed = 96 * 1024 * 1024
 	}

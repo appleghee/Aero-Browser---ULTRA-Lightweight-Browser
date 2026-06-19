@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"sort"
 	"sync"
 	"time"
 )
@@ -145,22 +146,12 @@ func (n *NDFCache) evictIfNeeded() {
 		toEvict = 1
 	}
 
-	// Sort by last access time
-	var coldest []kv
-	for _, e := range entries {
-		coldest = append(coldest, e)
-	}
-	for i := 0; i < len(coldest); i++ {
-		for j := i + 1; j < len(coldest); j++ {
-			if coldest[j].v.LastAccess.Before(coldest[i].v.LastAccess) {
-				coldest[i], coldest[j] = coldest[j], coldest[i]
-			}
-		}
-	}
-
-	for i := 0; i < toEvict && i < len(coldest); i++ {
-		n.currSize -= coldest[i].v.Size
-		delete(n.entries, coldest[i].k)
+	sort.Slice(entries, func(i, j int) bool {
+		return entries[i].v.LastAccess.Before(entries[j].v.LastAccess)
+	})
+	for i := 0; i < toEvict && i < len(entries); i++ {
+		n.currSize -= entries[i].v.Size
+		delete(n.entries, entries[i].k)
 	}
 }
 
