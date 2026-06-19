@@ -60,8 +60,14 @@ func (n *NDFCache) Fetch(url string, onData func([]byte, bool) error) (*NDFEntry
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		if cached != nil {
-			cached.Accesses++
-			cached.LastAccess = time.Now()
+			n.mu.Lock()
+			e, ok := n.entries[url]
+			n.mu.Unlock()
+			if ok {
+				e.Accesses++
+				e.LastAccess = time.Now()
+				return e, nil
+			}
 			return cached, nil
 		}
 		return nil, err
@@ -71,9 +77,18 @@ func (n *NDFCache) Fetch(url string, onData func([]byte, bool) error) (*NDFEntry
 	// 304 Not Modified
 	if resp.StatusCode == http.StatusNotModified {
 		if cached != nil {
-			cached.Accesses++
-			cached.LastAccess = time.Now()
-			cached.HitCount++
+			n.mu.Lock()
+			e, ok := n.entries[url]
+			n.mu.Unlock()
+			if ok {
+				e.Accesses++
+				e.LastAccess = time.Now()
+				e.HitCount++
+				if onData != nil {
+					onData(e.Data, true)
+				}
+				return e, nil
+			}
 			if onData != nil {
 				onData(cached.Data, true)
 			}
@@ -83,17 +98,36 @@ func (n *NDFCache) Fetch(url string, onData func([]byte, bool) error) (*NDFEntry
 
 	// Download full response
 	if resp.StatusCode == http.StatusOK {
-		data, _ := io.ReadAll(resp.Body)
+		data, err := io.ReadAll(resp.Body)
+		if err != nil {
+			if cached != nil {
+				n.mu.Lock()
+				e, ok := n.entries[url]
+				n.mu.Unlock()
+				if ok {
+					e.Accesses++
+					e.LastAccess = time.Now()
+					e.HitCount++
+					return e, nil
+				}
+				return cached, nil
+			}
+			return nil, err
+		}
 		hash := fmt.Sprintf("%x", md5.Sum(data))
 
-		// Only cache if different from cached
-		if cached != nil && cached.Hash == hash {
-			cached.Accesses++
-			cached.LastAccess = time.Now()
-			cached.HitCount++
-			return cached, nil
+		n.mu.Lock()
+		existing, exists := n.entries[url]
+		if exists && existing.Hash == hash {
+			existing.Accesses++
+			existing.LastAccess = time.Now()
+			existing.HitCount++
+			n.mu.Unlock()
+			if onData != nil {
+				onData(existing.Data, true)
+			}
+			return existing, nil
 		}
-
 		entry := &NDFEntry{
 			URL:          url,
 			ETag:         resp.Header.Get("ETag"),
@@ -106,10 +140,8 @@ func (n *NDFCache) Fetch(url string, onData func([]byte, bool) error) (*NDFEntry
 			Created:      time.Now(),
 			HitCount:     0,
 		}
-
-		n.mu.Lock()
-		if cached != nil {
-			n.currSize -= cached.Size
+		if exists {
+			n.currSize -= existing.Size
 		}
 		n.entries[url] = entry
 		n.currSize += entry.Size

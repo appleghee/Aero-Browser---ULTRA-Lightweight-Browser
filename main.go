@@ -54,6 +54,7 @@ window.__mbSearchReady=true;
 }
 addSearchBar();
 document.addEventListener("keydown",function(e){if(e.ctrlKey&&e.shiftKey&&e.code==="KeyL"){e.preventDefault();d.classList.toggle('show');if(d.classList.contains('show')){var i=document.getElementById('__mb_sbar_inp');if(i){i.focus();i.select()}}}});
+document.addEventListener("keydown",function(e){if(e.ctrlKey&&e.shiftKey&&e.code==="KeyH"){e.preventDefault();window.goNavigate('hyperspeed://console')}});
 })();`
 
 // minimized toolbar JS (~1KB)

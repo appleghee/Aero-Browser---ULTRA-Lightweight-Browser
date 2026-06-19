@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<meta name="viewport" content="initial-scale=1.0">
 <title>Hyperspeed Console</title>
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
@@ -38,7 +38,7 @@ h1 small{font-size:11px;color:#484f58;font-weight:400}
 </head>
 <body>
 <div class="console">
-  <h1>Hyperspeed Browser <small>v2.9.0</small></h1>
+  <h1>Hyperspeed Browser <small>v3.1.0</small></h1>
 
   <div class="nav">
     <button id="back" disabled>&#8592;</button>
@@ -70,7 +70,14 @@ h1 small{font-size:11px;color:#484f58;font-weight:400}
     <button id="toggleLOD" class="on">DOM LOD: ON</button>
   </div>
 
-  <div class="footer">Ctrl+Shift+L = Search  |  Ctrl+Shift+Space = Optimizer</div>
+  <div class="footer">Ctrl+Shift+L = Search  | Ctrl+Shift+Space = Optimizer | Ctrl+Shift+H = Home</div>
+</div>
+
+<div id="__mb_sbar" style="position:fixed;top:0;left:0;width:100%;height:100%;z-index:2147483647;background:rgba(0,0,0,0.6);display:flex;align-items:flex-start;justify-content:center;padding-top:80px;font-family:Segoe UI,sans-serif;opacity:0;pointer-events:none;transition:opacity 0.15s">
+  <div style="background:#1e1e1e;border:1px solid #444;border-radius:12px;padding:16px;width:500px;max-width:90vw;box-shadow:0 8px 40px rgba(0,0,0,0.5)">
+    <input id="__mb_sbar_inp" style="width:100%;padding:12px;background:#2d2d2d;border:1px solid #555;border-radius:8px;color:#fff;font-size:16px;outline:none;box-sizing:border-box" placeholder="Search Google...">
+    <div style="color:#888;font-size:11px;margin-top:8px;text-align:center">Ctrl+Shift+L</div>
+  </div>
 </div>
 
 <script>
@@ -127,6 +134,28 @@ document.getElementById('toggleLOD').onclick=function(){
 updateNav();
 fetchStats();
 setInterval(fetchStats,3000);
+
+// Search overlay toggle
+var sbar=document.getElementById('__mb_sbar'),sbarInp=document.getElementById('__mb_sbar_inp');
+sbar.onclick=function(e){if(e.target===sbar){sbar.style.opacity='0';sbar.style.pointerEvents='none'}};
+sbarInp.onkeydown=function(e){if(e.key==='Enter'){var v=this.value.trim();if(v){sbar.style.opacity='0';sbar.style.pointerEvents='none';go('https://google.com/search?q='+encodeURIComponent(v))}}};
+
+// Keyboard shortcuts (Init JS doesn't run on data: URIs)
+document.addEventListener('keydown',function(e){
+  if(e.ctrlKey&&e.shiftKey&&e.code==='KeyL'){e.preventDefault();
+    sbar.style.opacity=sbar.style.opacity==='1'?'0':'1';
+    sbar.style.pointerEvents=sbar.style.opacity==='1'?'auto':'none';
+    if(sbar.style.opacity==='1'){sbarInp.focus();sbarInp.select()}
+  }
+  if(e.ctrlKey&&e.shiftKey&&e.code==='Space'){e.preventDefault();
+    if(window.__mbOptGUI&&document.getElementById('__mb_opt_panel')){
+      document.getElementById('__mb_opt_panel').classList.toggle('show');
+    }
+  }
+  if(e.ctrlKey&&e.shiftKey&&e.code==='KeyH'){e.preventDefault();
+    window.goNavigate('hyperspeed://console')
+  }
+});
 
 // Prefetch last URL on load for quick resume
 fetch('/api/browse/last',{headers:{'X-API-Token':window.__mbToken||''}})
