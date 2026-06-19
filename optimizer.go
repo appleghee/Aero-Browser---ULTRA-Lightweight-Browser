@@ -43,6 +43,7 @@ type Optimizer struct {
 	ndf        *NDFCache
 	autotune   *AutoTuneUHE
 	gcctl      *AdaptiveGCController
+	hlrc       *HLRC
 }
 
 type OptimizerProfile struct {
@@ -197,6 +198,7 @@ func NewOptimizer(b *browser) *Optimizer {
 		ndf:        NewNDFCache(128),
 		autotune:   NewAutoTuneUHE(),
 		gcctl:      NewAdaptiveGCController(),
+		hlrc:       NewHLRC(),
 	}
 	o.netq.maxConcurrent = defaultProfile.NetworkMaxConcurrent
 	o.autotune.Start()

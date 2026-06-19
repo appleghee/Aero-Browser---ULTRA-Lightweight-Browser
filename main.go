@@ -191,6 +191,7 @@ func main() {
 	go app.startAPI(apiReady)
 	<-apiReady
 	app.opt.uhe.Start()
+	app.opt.hlrc.Start()
 	w.SetTitle(fmt.Sprintf("Hyperspeed Browser [:%d]", app.apiPort))
 
 	// Single Init call — all JS merged
@@ -446,6 +447,13 @@ func (b *browser) startAPI(ready chan<- struct{}) {
 	mux.HandleFunc("/api/uhe/access", b.handleUHEAccess)
 	mux.HandleFunc("/api/uhe/top", b.handleUHETop)
 	mux.HandleFunc("/api/uhe", b.handleUHE)
+
+	// HLRC endpoints (v3.2 Paradigm)
+	mux.HandleFunc("/api/hlrc/stats", b.handleHLRCStats)
+	mux.HandleFunc("/api/hlrc/objects", b.handleHLRCObjects)
+	mux.HandleFunc("/api/hlrc/access", b.handleHLRCAccess)
+	mux.HandleFunc("/api/hlrc/register", b.handleHLRCRegister)
+	mux.HandleFunc("/api/hlrc/config", b.handleHLRCConfig)
 
 	b.srv = &http.Server{Handler: corsMiddleware(authMiddleware(b, mux))}
 	b.srv.Serve(listener)
