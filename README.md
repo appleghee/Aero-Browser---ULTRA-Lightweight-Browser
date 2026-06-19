@@ -322,7 +322,7 @@ GET /api  → Full API documentation (JSON schema)
 
 ## Benchmarks
 
-Tested on **Intel Core i3-4160 @ 3.60GHz** — no dedicated GPU, 8 GB DDR3, Windows 11, WebView2 Runtime 127+.
+Tested on **Intel Celeron 1005M** — no dedicated GPU, 8 GB DDR3, Windows 11, WebView2 Runtime 127+.
 
 ### Google Earth (heavy 3D tab)
 
