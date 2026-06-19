@@ -194,7 +194,7 @@ func main() {
 
 	// Single Init call — all JS merged
 	w.Init(fmt.Sprintf(`window.__mbPort=%d;window.__mbToken=%q;`, app.apiPort, app.apiToken) + overlayJS + toolbarJS + runtimeJS + popupBlockerJS + optimizerInitJS + optimizerGUIJS + lodJS)
-	w.Navigate(app.curr)
+	navTo(app, app.curr)
 	go app.injectTurboLoop()
 	w.Run()
 
