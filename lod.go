@@ -29,6 +29,7 @@ type LODStats struct {
 	Memory  float64 `json:"memoryMB"`
 	SavedKB float64 `json:"savedKB"`
 	Inflate int     `json:"inflates"`
+	Cascade int     `json:"cascade"` // IO Cascade: elements using content-visibility:auto
 	Status  string  `json:"status"`
 }
 
@@ -40,7 +41,7 @@ for(var i=0;i<total;i++){var v=l[i];if(v===0)le0++;else if(v===1)le1++;else if(v
 var mem=performance.memory?Math.round(performance.memory.usedJSHeapSize/1048576*10)/10:0;
 var kb=0;
 for(var k in r){var o=r[k];if(o&&o.len)kb+=o.len}
-return{total:total,level0:le0,level1:le1,level2:le2,level3:le3,memoryMB:mem,savedKB:Math.round(kb/1024),inflates:s.inflates||0,status:'active'}
+return{total:total,level0:le0,level1:le1,level2:le2,level3:le3,memoryMB:mem,savedKB:Math.round(kb/1024),inflates:s.inflates||0,cascade:s.cvCount||0,status:'active'}
 })()`
 
 var lodToggleJS = `(function(){var s=window.__mbLOD;if(!s)return 'no LOD';s.enabled=!s.enabled;return s.enabled?'enabled':'disabled'})()`
@@ -159,4 +160,19 @@ func (b *browser) handleLOD(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	lodHandler(b.opt.lod)(w, r)
+}
+
+// IO Cascade stats — wraps LOD engine cascade count
+func (b *browser) handleIOCStats(w http.ResponseWriter, r *http.Request) {
+	if b.opt == nil || b.opt.lod == nil {
+		writeError(w, 503, "LOD not init")
+		return
+	}
+	s := b.opt.lod.Gather()
+	writeJSON(w, map[string]interface{}{
+		"ok":     true,
+		"stats":  s,
+		"engine": "io-cascade",
+		"note":   "content-visibility:auto via IO Cascade (v3.2 alpha)",
+	})
 }

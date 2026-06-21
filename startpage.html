@@ -67,6 +67,16 @@ h1 small{font-size:11px;color:#484f58;font-weight:400}
   </div>
 
   <div class="stats">
+    <h2>IO Cascade <small style="color:#4fc3f7;font-size:10px">v3.2α</small></h2>
+    <div class="stat-row" id="iocStats">
+      <div class="stat-item"><div class="val" id="iocCV">-</div><div class="lbl">ω-vis</div></div>
+      <div class="stat-item"><div class="val" id="iocL1">-</div><div class="lbl">LOD1</div></div>
+      <div class="stat-item"><div class="val" id="iocL2">-</div><div class="lbl">LOD2</div></div>
+      <div class="stat-item"><div class="val" id="iocInf">-</div><div class="lbl">Inflates</div></div>
+    </div>
+  </div>
+
+  <div class="stats">
     <h2>HLRC Runtime Core</h2>
     <div class="stat-row" id="hlrcStats">
       <div class="stat-item"><div class="val" id="hlrcObj">-</div><div class="lbl">Objects</div></div>
@@ -91,6 +101,7 @@ h1 small{font-size:11px;color:#484f58;font-weight:400}
 </div>
 
 <script>
+window.__mbToken='{{APITOKEN}}';window.__mbPort={{APIPORT}};window.__mbBase='http://127.0.0.1:'+window.__mbPort;
 function go(u){if(u&&u.trim())window.goNavigate(u.trim())}
 
 function updateNav(){
@@ -106,7 +117,7 @@ document.getElementById('fwd').onclick=function(){window.goForward()};
 document.getElementById('reload').onclick=function(){window.goReload()};
 
 document.getElementById('resume').onclick=function(){
-  fetch('/api/browse/last',{headers:{'X-API-Token':window.__mbToken||''}})
+  fetch(window.__mbBase+'/api/browse/last',{headers:{'X-API-Token':window.__mbToken||''}})
     .then(function(r){return r.json()})
     .then(function(d){if(d.ok&&d.url)go(d.url)})
     ['catch'](function(){go('https://google.com')})
@@ -121,7 +132,7 @@ document.querySelectorAll('.quick a').forEach(function(a){
 });
 
 function fetchStats(){
-  fetch('/api/lod/stats',{headers:{'X-API-Token':window.__mbToken||''}})
+  fetch(window.__mbBase+'/api/lod/stats',{headers:{'X-API-Token':window.__mbToken||''}})
     .then(function(r){return r.json()})
     .then(function(d){
       if(d.ok&&d.stats){
@@ -138,11 +149,24 @@ document.getElementById('toggleLOD').onclick=function(){
   lodOn=!lodOn;
   this.textContent='DOM LOD: '+(lodOn?'ON':'OFF');
   this.className=lodOn?'on':'off';
-  fetch('/api/lod/toggle',{method:'POST',headers:{'Content-Type':'application/json','X-API-Token':window.__mbToken||''},body:JSON.stringify({action:'toggle'})})['catch'](function(){});
+  fetch(window.__mbBase+'/api/lod/toggle',{method:'POST',headers:{'Content-Type':'application/json','X-API-Token':window.__mbToken||''},body:JSON.stringify({action:'toggle'})})['catch'](function(){});
 };
 
+function fetchIOCStats(){
+  fetch(window.__mbBase+'/api/ioc/stats',{headers:{'X-API-Token':window.__mbToken||''}})
+    .then(function(r){return r.json()})
+    .then(function(d){
+      if(d.ok&&d.stats){
+        document.getElementById('iocCV').textContent=d.stats.cascade||0;
+        document.getElementById('iocL1').textContent=d.stats.level1||0;
+        document.getElementById('iocL2').textContent=d.stats.level2||0;
+        document.getElementById('iocInf').textContent=d.stats.inflates||0;
+      }
+    })['catch'](function(){});
+}
+
 function fetchHLRCStats(){
-  fetch('/api/hlrc/stats',{headers:{'X-API-Token':window.__mbToken||''}})
+  fetch(window.__mbBase+'/api/hlrc/stats',{headers:{'X-API-Token':window.__mbToken||''}})
     .then(function(r){return r.json()})
     .then(function(d){
       if(d.ok&&d.stats){
@@ -157,8 +181,10 @@ function fetchHLRCStats(){
 
 updateNav();
 fetchStats();
+fetchIOCStats();
 fetchHLRCStats();
 setInterval(fetchStats,3000);
+setInterval(fetchIOCStats,3000);
 setInterval(fetchHLRCStats,3000);
 
 // Search overlay toggle
@@ -179,12 +205,13 @@ document.addEventListener('keydown',function(e){
     }
   }
   if(e.ctrlKey&&e.shiftKey&&e.code==='KeyH'){e.preventDefault();
-    fetch('/api/navigate',{method:'POST',headers:{'Content-Type':'application/json','X-API-Token':window.__mbToken||''},body:'{"url":"hyperspeed://console"}'})['catch'](function(){})
+    if(typeof window.goNavigate==='function'){window.goNavigate('hyperspeed://console')}else{
+      fetch(window.__mbBase+'/api/navigate',{method:'POST',headers:{'Content-Type':'application/json','X-API-Token':window.__mbToken||''},body:'{"url":"hyperspeed://console"}'})['catch'](function(){})}
   }
-});
+},true);
 
 // Prefetch last URL on load for quick resume
-fetch('/api/browse/last',{headers:{'X-API-Token':window.__mbToken||''}})
+fetch(window.__mbBase+'/api/browse/last',{headers:{'X-API-Token':window.__mbToken||''}})
   .then(function(r){return r.json()})
   .then(function(d){if(d.ok&&d.url){urlInp.placeholder='Last: '+d.url;}})
   ['catch'](function(){});

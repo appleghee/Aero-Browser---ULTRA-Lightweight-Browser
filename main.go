@@ -41,7 +41,7 @@ s.textContent='#__mb_sbar{position:fixed;top:0;left:0;width:100%;height:100%;z-i
 '#__mb_sbar_inner input:focus{border-color:#4fc3f7}'+
 '#__mb_sbar_inner input::placeholder{color:#777}'+
 '#__mb_sbar_inner .hint{color:#888;font-size:11px;margin-top:8px;text-align:center}';
-document.head.appendChild(s);
+(document.head||document.documentElement).appendChild(s);
 var d=document.createElement('div');d.id='__mb_sbar';
 d.innerHTML='<div id="__mb_sbar_inner"><input id="__mb_sbar_inp" placeholder="Search Google..."><div class="hint">Ctrl+Shift+L</div></div>';
 function addSearchBar(){if(document.body){document.body.appendChild(d);setupSearchBar()}else{requestAnimationFrame(addSearchBar)}}
@@ -53,8 +53,8 @@ d.onclick=function(e){if(e.target===d)d.classList.remove('show')};
 window.__mbSearchReady=true;
 }
 addSearchBar();
-document.addEventListener("keydown",function(e){if(e.ctrlKey&&e.shiftKey&&e.code==="KeyL"){e.preventDefault();d.classList.toggle('show');if(d.classList.contains('show')){var i=document.getElementById('__mb_sbar_inp');if(i){i.focus();i.select()}}}});
-document.addEventListener("keydown",function(e){if(e.ctrlKey&&e.shiftKey&&e.code==="KeyH"){e.preventDefault();var t=window.__mbToken||"";fetch('/api/navigate',{method:'POST',headers:{'Content-Type':'application/json','X-API-Token':t},body:'{"url":"hyperspeed://console"}'})['catch'](function(){})}});
+document.addEventListener("keydown",function(e){if(e.ctrlKey&&e.shiftKey&&e.code==="KeyL"){e.preventDefault();d.classList.toggle('show');if(d.classList.contains('show')){var i=document.getElementById('__mb_sbar_inp');if(i){i.focus();i.select()}}}},true);
+document.addEventListener("keydown",function(e){if(e.ctrlKey&&e.shiftKey&&e.code==="KeyH"){e.preventDefault();if(typeof window.goNavigate==='function'){window.goNavigate('hyperspeed://console')}else{var b=window.__mbBase||'http://127.0.0.1:'+(window.__mbPort||6969);fetch(b+'/api/navigate',{method:'POST',headers:{'Content-Type':'application/json','X-API-Token':window.__mbToken||''},body:'{"url":"hyperspeed://console"}'})['catch'](function(){})}}},true);
 })();`
 
 // minimized toolbar JS (~1KB)
@@ -64,14 +64,14 @@ s.textContent='#__mb_bar{position:fixed;top:0;left:0;right:0;height:32px;z-index
 '#__mb_bar button{background:none;border:none;color:#aaa;font-size:16px;cursor:pointer;width:28px;height:24px;border-radius:3px}'+
 '#__mb_bar button:hover{background:rgba(255,255,255,0.1)}'+
 '#__mb_bar input{flex:1;height:24px;padding:0 8px;background:#2d2d2d;border:1px solid #444;border-radius:3px;color:#ddd;font-size:13px;outline:none;min-width:0}';
-document.head.appendChild(s);
+(document.head||document.documentElement).appendChild(s);
 var d=document.createElement('div');d.id='__mb_bar';
-d.innerHTML='<button id="__mb_b">\u2039</button><button id="__mb_f">\u203A</button><button id="__mb_r">\u21bb</button><input id="__mb_u" placeholder="URL...">';
+d.innerHTML='<button id="__mb_b">\u2039</button><button id="__mb_f">\u203A</button><button id="__mb_r">\u21bb</button><button id="__mb_h" style="color:#58a6ff;font-weight:700;font-size:14px">\u2302</button><input id="__mb_u" placeholder="URL...">';
 function appendBar(){var b=document.body||document.documentElement;if(b){b.insertBefore(d,b.firstChild)}else{requestAnimationFrame(appendBar)}}
 appendBar();
 function gs(){try{var v=getNavState();return JSON.parse(v||'{}')}catch(e){return{}}}
 var o=new MutationObserver(function(){
-var u=document.getElementById('__mb_u'),b=document.getElementById('__mb_b'),f=document.getElementById('__mb_f'),r=document.getElementById('__mb_r');
+var u=document.getElementById('__mb_u'),b=document.getElementById('__mb_b'),f=document.getElementById('__mb_f'),r=document.getElementById('__mb_r'),h=document.getElementById('__mb_h');
 if(!u)return;
 o.disconnect();
 var s2=gs();
@@ -79,6 +79,7 @@ u.onkeydown=function(e){if(e.key=='Enter'&&u.value.trim())window.goNavigate(u.va
 if(b){b.disabled=!s2.b;b.onclick=function(){window.goBack()}}
 if(f){f.disabled=!s2.f;f.onclick=function(){window.goForward()}}
 if(r)r.onclick=function(){window.goReload()};
+if(h)h.onclick=function(){window.goNavigate('hyperspeed://console')};
 });
 o.observe(document.documentElement,{childList:true,subtree:true});
 })();`
@@ -99,7 +100,7 @@ var c=p.clone();c.text().then(function(t){r.responseBody=tr(t,10240);r.bodyLengt
 window.fetch=function(u,o){var r={url:(typeof u=='string'?u:(u&&u.url)||''),method:(o&&o.method)||'GET',requestBody:(o&&o.body)?String(o.body):null,type:'fetch',startTime:Date.now()};L.push(r);
 return _f.call(this,u,o).then(function(p){rl(r,p);return p})['catch'](function(e){r.error=e.message;r.endTime=Date.now();throw e})};
 window.XMLHttpRequest=function(){var x=new _X(),r={type:'xhr',startTime:Date.now()};L.push(r);
-var o=x.open.bind(x);x.open=function(m,u){r.method=m;r.url=u;return o(m,u)};
+var o=x.open.bind(x);x.open=function(){r.method=arguments[0];r.url=arguments[1];return o.apply(x,arguments)};
 var s=x.send.bind(x);x.send=function(b){r.requestBody=b?String(b):null;r.startTime=Date.now();
 x.addEventListener('readystatechange',function(){if(x.readyState==4){
 r.status=x.status;r.statusText=x.statusText;r.endTime=Date.now();r.contentType=x.getResponseHeader('content-type')||'';
@@ -167,7 +168,6 @@ func main() {
 		curr:     startURL,
 		evalReqs: make(map[int]chan string),
 		apiToken: generateRandomToken(),
-		startHTML: startPageHTML,
 	}
 
 	app.opt = NewOptimizer(app)
@@ -190,12 +190,14 @@ func main() {
 	apiReady := make(chan struct{})
 	go app.startAPI(apiReady)
 	<-apiReady
+	app.startHTML = strings.ReplaceAll(startPageHTML, "{{APITOKEN}}", app.apiToken)
+	app.startHTML = strings.ReplaceAll(app.startHTML, "{{APIPORT}}", fmt.Sprintf("%d", app.apiPort))
 	app.opt.uhe.Start()
 	app.opt.hlrc.Start()
 	w.SetTitle(fmt.Sprintf("Hyperspeed Browser [:%d]", app.apiPort))
 
 	// Single Init call — all JS merged
-	w.Init(fmt.Sprintf(`window.__mbPort=%d;window.__mbToken=%q;`, app.apiPort, app.apiToken) + overlayJS + toolbarJS + runtimeJS + popupBlockerJS + optimizerInitJS + optimizerGUIJS + lodJS)
+	w.Init(fmt.Sprintf(`window.__mbPort=%d;window.__mbToken=%q;window.__mbBase='http://127.0.0.1:'+window.__mbPort;`, app.apiPort, app.apiToken) + overlayJS + toolbarJS + runtimeJS + popupBlockerJS + optimizerInitJS + optimizerGUIJS + lodJS)
 	navTo(app, app.curr)
 	go app.injectTurboLoop()
 	w.Run()
@@ -425,6 +427,7 @@ func (b *browser) startAPI(ready chan<- struct{}) {
 	mux.HandleFunc("/api/lod/stats", b.handleLODStats)
 	mux.HandleFunc("/api/lod/toggle", b.handleLODToggle)
 	mux.HandleFunc("/api/lod", b.handleLOD)
+	mux.HandleFunc("/api/ioc/stats", b.handleIOCStats)
 
 	// UHE endpoints
 	// Browse history endpoints
@@ -497,8 +500,9 @@ func writeJSON(w http.ResponseWriter, data interface{}) {
 }
 
 func writeError(w http.ResponseWriter, code int, msg string) {
+	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(code)
-	writeJSON(w, map[string]interface{}{"ok": false, "error": msg})
+	json.NewEncoder(w).Encode(map[string]interface{}{"ok": false, "error": msg})
 }
 
 // ---------------------------------------------------------------------------
@@ -606,6 +610,7 @@ func (b *browser) handleAPIRoot(w http.ResponseWriter, r *http.Request) {
 			{"path": "POST /api/opt/profile", "desc": "Switch profile: balanced|speed|compat"},
 			{"path": "POST /api/opt/run", "desc": "Run full optimization pipeline"},
 			{"path": "GET  /api/opt/tune", "desc": "Auto-tune results + trend"},
+			{"path": "GET  /api/ioc/stats", "desc": "IO Cascade stats (v3.2 alpha)"},
 		},
 	})
 }
@@ -932,14 +937,21 @@ func (b *browser) handleInfo(w http.ResponseWriter, r *http.Request) {
 		currURL = strings.Trim(res, `"`)
 	}
 
+	b.mu.Lock()
+	historySize := len(b.history)
+	historyIdx := b.idx
+	canBack := b.idx > 0
+	canFwd := b.idx < len(b.history)-1
+	b.mu.Unlock()
+
 	writeJSON(w, map[string]interface{}{
 		"ok":           true,
 		"currentURL":   currURL,
 		"pageReady":    pageReady,
-		"historySize":  len(b.history),
-		"historyIdx":   b.idx,
-		"canGoBack":    b.idx > 0,
-		"canGoForward": b.idx < len(b.history)-1,
+		"historySize":  historySize,
+		"historyIdx":   historyIdx,
+		"canGoBack":    canBack,
+		"canGoForward": canFwd,
 		"apiPort":      b.apiPort,
 	})
 }
@@ -985,6 +997,8 @@ func (b *browser) navigate(rawURL string) {
 }
 
 func (b *browser) goBack() {
+	b.mu.Lock()
+	defer b.mu.Unlock()
 	if b.idx > 0 {
 		b.idx--
 		b.curr = b.history[b.idx]
@@ -993,6 +1007,8 @@ func (b *browser) goBack() {
 }
 
 func (b *browser) goForward() {
+	b.mu.Lock()
+	defer b.mu.Unlock()
 	if b.idx < len(b.history)-1 {
 		b.idx++
 		b.curr = b.history[b.idx]
