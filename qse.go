@@ -129,14 +129,6 @@ func (q *QSEEngine) Stats() *QSEStats {
 	return &q.stats
 }
 
-func (b *browser) navigateOrShortcut(rawURL string) {
-	if resolved, ok := b.opt.qse.Resolve(rawURL); ok {
-		b.w.Navigate(resolved)
-		return
-	}
-	b.w.Navigate(rawURL)
-}
-
 func (b *browser) handleQSEStats(w http.ResponseWriter, r *http.Request) {
 	if b.opt == nil || b.opt.qse == nil {
 		writeError(w, 503, "QSE not init")

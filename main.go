@@ -194,7 +194,25 @@ func main() {
 	app.startHTML = strings.ReplaceAll(app.startHTML, "{{APIPORT}}", fmt.Sprintf("%d", app.apiPort))
 	app.opt.uhe.Start()
 	app.opt.hlrc.Start()
-	w.SetTitle(fmt.Sprintf("Hyperspeed Browser [:%d]", app.apiPort))
+	app.opt.lod.Start()
+	app.opt.ehs.Start()
+	app.opt.rpc.Start()
+	app.opt.qse.Start()
+	app.opt.rhd.Start()
+	app.opt.pvc.Start()
+	app.opt.dna.Start()
+	app.opt.hbm.Start()
+	app.opt.avp.Start()
+	app.opt.domCompress.Start()
+	app.opt.pce.Start()
+	app.opt.upm.Start()
+	app.opt.dra.Start()
+	app.opt.mcs.Start()
+	app.opt.cbl.Start()
+	app.opt.uee.Start()
+	app.opt.hfs.Start()
+	app.opt.rcm.Start()
+	w.SetTitle(fmt.Sprintf("Hyperspeed Browser [:%d] Genesis", app.apiPort))
 
 	// Single Init call — all JS merged
 	w.Init(fmt.Sprintf(`window.__mbPort=%d;window.__mbToken=%q;window.__mbBase='http://127.0.0.1:'+window.__mbPort;`, app.apiPort, app.apiToken) + overlayJS + toolbarJS + runtimeJS + popupBlockerJS + optimizerInitJS + optimizerGUIJS + lodJS)
@@ -328,6 +346,11 @@ func (b *browser) injectTurboLoop() {
 		b.w.Eval(spbUI)
 		b.w.Eval(spbUICode)
 	})
+	// Inject QuickOpt engines after page settles
+	time.Sleep(200 * time.Millisecond)
+	if b.opt != nil && b.opt.quick != nil {
+		b.opt.quick.InjectAll()
+	}
 }
 
 // ---------------------------------------------------------------------------
@@ -444,6 +467,23 @@ func (b *browser) startAPI(ready chan<- struct{}) {
 
 	// GC Controller endpoints
 	mux.HandleFunc("/api/gc/stats", b.handleGCStats)
+
+	// v3.2.0 Genesis engine endpoints
+	mux.HandleFunc("/api/dna/fingerprint", b.handleDNAFingerprint)
+	mux.HandleFunc("/api/dna/stats", b.handleDNAStats)
+	mux.HandleFunc("/api/dna/clear", b.handleDNAClear)
+	mux.HandleFunc("/api/hbm/stats", b.handleHBMStats)
+	mux.HandleFunc("/api/avp/stats", b.handleAVPStats)
+	mux.HandleFunc("/api/domcompress/stats", b.handleDOMCompressStats)
+	mux.HandleFunc("/api/ncg/stats", b.handleNCGStats)
+	mux.HandleFunc("/api/pce/stats", b.handlePCEStats)
+	mux.HandleFunc("/api/upm/stats", b.handleUPMStats)
+	mux.HandleFunc("/api/dra/stats", b.handleDRAStats)
+	mux.HandleFunc("/api/mcs/stats", b.handleMCSStats)
+	mux.HandleFunc("/api/cbl/stats", b.handleCBLStats)
+	mux.HandleFunc("/api/uee/stats", b.handleUEEStats)
+	mux.HandleFunc("/api/hfs/stats", b.handleHFSStats)
+	mux.HandleFunc("/api/rcm/stats", b.handleRCMStats)
 
 	mux.HandleFunc("/api/uhe/start", b.handleUHEStart)
 	mux.HandleFunc("/api/uhe/stats", b.handleUHEStats)
@@ -582,7 +622,7 @@ func (b *browser) handleAPIRoot(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]interface{}{
 		"ok":      true,
 		"name":    "Mini Browser Deep Inspect API",
-		"version": "2.1",
+		"version": "3.2.0-genesis",
 		"endpoints": []map[string]string{
 			{"path": "GET  /api", "desc": "API info"},
 			{"path": "POST /api/navigate", "desc": "Navigate to URL {\"url\":\"...\"}"},
@@ -611,6 +651,21 @@ func (b *browser) handleAPIRoot(w http.ResponseWriter, r *http.Request) {
 			{"path": "POST /api/opt/run", "desc": "Run full optimization pipeline"},
 			{"path": "GET  /api/opt/tune", "desc": "Auto-tune results + trend"},
 			{"path": "GET  /api/ioc/stats", "desc": "IO Cascade stats (v3.2 alpha)"},
+			{"path": "GET  /api/dna/fingerprint", "desc": "Page DNA fingerprint (v3.2 Genesis)"},
+			{"path": "GET  /api/dna/stats", "desc": "Page DNA stats"},
+			{"path": "POST /api/dna/clear", "desc": "Clear DNA cache"},
+			{"path": "GET  /api/hbm/stats", "desc": "Heat-Based Memory allocator stats"},
+			{"path": "GET  /api/avp/stats", "desc": "Adaptive Viewport Predictor stats"},
+			{"path": "GET  /api/domcompress/stats", "desc": "DOM Compression stats"},
+			{"path": "GET  /api/ncg/stats", "desc": "Network Cost Graph stats"},
+			{"path": "GET  /api/pce/stats", "desc": "Page Change Engine stats"},
+			{"path": "GET  /api/upm/stats", "desc": "User Presence Model stats"},
+			{"path": "GET  /api/dra/stats", "desc": "Dynamic Resource Adjustment stats"},
+			{"path": "GET  /api/mcs/stats", "desc": "Micro-Controller Scheduler stats"},
+			{"path": "GET  /api/cbl/stats", "desc": "Content-Based Loading stats"},
+			{"path": "GET  /api/uee/stats", "desc": "Unified Event Engine stats"},
+			{"path": "GET  /api/hfs/stats", "desc": "Heat-File System stats"},
+			{"path": "GET  /api/rcm/stats", "desc": "Resource Cost Model stats"},
 		},
 	})
 }

@@ -164,9 +164,12 @@ func (vd *ValueDensityEngine) Scan() (*VDStats, error) {
 var (
 	mbCacheVal float64
 	mbCacheAt  time.Time
+	mbCacheMu  sync.Mutex
 )
 
 func memoryBudget() float64 {
+	mbCacheMu.Lock()
+	defer mbCacheMu.Unlock()
 	if time.Since(mbCacheAt) < 30*time.Second {
 		return mbCacheVal
 	}

@@ -44,6 +44,21 @@ type Optimizer struct {
 	autotune   *AutoTuneUHE
 	gcctl      *AdaptiveGCController
 	hlrc       *HLRC
+
+	// v3.2.0 Genesis engines
+	dna        *DNAEngine
+	hbm        *HBMEngine
+	avp        *AVPEngine
+	domCompress *DOMCompressEngine
+	ncg        *NCGEngine
+	pce        *PCEEngine
+	upm        *UPMEngine
+	dra        *DRAEngine
+	mcs        *MCSEngine
+	cbl        *CBLEngine
+	uee        *UEEEngine
+	hfs        *HFSEngine
+	rcm        *RCMEngine
 }
 
 type OptimizerProfile struct {
@@ -199,6 +214,21 @@ func NewOptimizer(b *browser) *Optimizer {
 		autotune:   NewAutoTuneUHE(),
 		gcctl:      NewAdaptiveGCController(),
 		hlrc:       NewHLRC(),
+
+		// v3.2.0 Genesis
+		dna:        NewDNAEngine(b),
+		hbm:        NewHBMEngine(),
+		avp:        NewAVPEngine(b),
+		domCompress: NewDOMCompressEngine(b),
+		ncg:        NewNCGEngine(b),
+		pce:        NewPCEEngine(b),
+		upm:        NewUPMEngine(b),
+		dra:        NewDRAEngine(b),
+		mcs:        NewMCSEngine(b),
+		cbl:        NewCBLEngine(b),
+		uee:        NewUEEEngine(b),
+		hfs:        NewHFSEngine(b),
+		rcm:        NewRCMEngine(b),
 	}
 	o.uhe.SetHLRC(o.hlrc)
 	o.ndf.SetHLRC(o.hlrc)

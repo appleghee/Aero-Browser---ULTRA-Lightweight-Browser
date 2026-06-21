@@ -196,8 +196,8 @@ console.log('%c[opencode] I see you reading the source. Nice.','color:#4fc3f7;fo
 window.__mbEggs._oc='done';}
 });
 // Console greeting
-console.log('%cHyperspeed Browser v2.4','font-size:18px;font-weight:bold;color:#4fc3f7');
-console.log('%cPVDS + CRG + RHD-GC + PVC + EHS + 5 QuickOpt engines active','color:#66bb6a;font-size:11px');
+console.log('%cHyperspeed Browser v3.2 Genesis','font-size:18px;font-weight:bold;color:#4fc3f7');
+console.log('%c19 optimization engines active — IO Cascade + HLRC + DNA + HBM + AVP + more','color:#66bb6a;font-size:11px');
 console.log('%c\u2728 Type the Konami code for a surprise...','color:#ffa726;font-size:11px');
 console.log('%c\u2728 Or try typing "opencode"...','color:#ab47bc;font-size:11px');
 })()`

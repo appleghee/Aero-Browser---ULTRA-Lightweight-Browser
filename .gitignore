@@ -5,6 +5,10 @@
 *.db
 *.db-shm
 .db-wal
+*.zip
+*.syso
+.codebase-memory/
 .codegraph/
 tmp/
 token-optimizer/
+bench.exe

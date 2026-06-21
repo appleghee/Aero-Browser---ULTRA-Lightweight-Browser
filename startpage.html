@@ -38,7 +38,7 @@ h1 small{font-size:11px;color:#484f58;font-weight:400}
 </head>
 <body>
 <div class="console">
-  <h1>Hyperspeed Browser <small>v3.1.0</small></h1>
+  <h1>Hyperspeed Browser <small>v3.2.0 Genesis</small></h1>
 
   <div class="nav">
     <button id="back" disabled>&#8592;</button>
@@ -83,6 +83,16 @@ h1 small{font-size:11px;color:#484f58;font-weight:400}
       <div class="stat-item"><div class="val" id="hlrcDem">-</div><div class="lbl">Demotions</div></div>
       <div class="stat-item"><div class="val" id="hlrcRAM">-</div><div class="lbl">RAM MB</div></div>
       <div class="stat-item"><div class="val" id="hlrcLOD">-</div><div class="lbl">LOD0</div></div>
+    </div>
+  </div>
+
+  <div class="stats">
+    <h2>Genesis Engines <small style="color:#ffa726;font-size:10px">v3.2</small></h2>
+    <div class="stat-row" id="genesisStats">
+      <div class="stat-item"><div class="val" id="gsDNA">-</div><div class="lbl">DNA</div></div>
+      <div class="stat-item"><div class="val" id="gsAVP">-</div><div class="lbl">AVP</div></div>
+      <div class="stat-item"><div class="val" id="gsUPM">-</div><div class="lbl">UPM</div></div>
+      <div class="stat-item"><div class="val" id="gsPCE">-</div><div class="lbl">PCE</div></div>
     </div>
   </div>
 
@@ -179,13 +189,26 @@ function fetchHLRCStats(){
     })['catch'](function(){});
 }
 
+function fetchGenesisStats(){
+  fetch(window.__mbBase+'/api/dna/stats',{headers:{'X-API-Token':window.__mbToken||''}})
+    .then(function(r){return r.json()}).then(function(d){if(d.ok&&d.stats)document.getElementById('gsDNA').textContent=d.stats.profiled})['catch'](function(){});
+  fetch(window.__mbBase+'/api/avp/stats',{headers:{'X-API-Token':window.__mbToken||''}})
+    .then(function(r){return r.json()}).then(function(d){if(d.ok&&d.stats)document.getElementById('gsAVP').textContent=d.stats.velocity.toFixed(0)})['catch'](function(){});
+  fetch(window.__mbBase+'/api/upm/stats',{headers:{'X-API-Token':window.__mbToken||''}})
+    .then(function(r){return r.json()}).then(function(d){if(d.ok&&d.stats)document.getElementById('gsUPM').textContent=d.stats.state})['catch'](function(){});
+  fetch(window.__mbBase+'/api/pce/stats',{headers:{'X-API-Token':window.__mbToken||''}})
+    .then(function(r){return r.json()}).then(function(d){if(d.ok&&d.stats)document.getElementById('gsPCE').textContent=d.stats.batched})['catch'](function(){});
+}
+
 updateNav();
 fetchStats();
 fetchIOCStats();
 fetchHLRCStats();
+fetchGenesisStats();
 setInterval(fetchStats,3000);
 setInterval(fetchIOCStats,3000);
 setInterval(fetchHLRCStats,3000);
+setInterval(fetchGenesisStats,3000);
 
 // Search overlay toggle
 var sbar=document.getElementById('__mb_sbar'),sbarInp=document.getElementById('__mb_sbar_inp');
