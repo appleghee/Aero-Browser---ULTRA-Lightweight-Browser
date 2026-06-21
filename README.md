@@ -14,12 +14,9 @@
 
 - **WebView2 engine** — Edge Chromium embedded, ultra-lightweight (~7 MB binary)
 - **32 optimization engines** (19 core + 13 Genesis) — Memory, CPU, Network, Cache, DOM, Scroll Prediction, DNA, and adaptive tuning
-- **50+ REST API endpoints** — navigate, DOM snapshot, click, fill, eval JS, screenshot, storage, cookies, hooks
+- **30+ REST API endpoints** — navigate, DOM snapshot, click, fill, eval JS, screenshot, storage, cookies, stats
 - **Smart caching** — NDF + LRU-K + Request Coalescing + SmartCache
 - **Console Start Page** — `hyperspeed://console` with navigation, quick links, live stats
-- **Custom scripts** — inject persistent JS with auto-run on navigation (SPA support)
-- **Floating control panel** — toggle optimizations, run scripts, view live stats
-- **Keyboard shortcuts** — Ctrl+Shift+Space toggle panel, Ctrl+Shift+R run script
 - **API auth** — per-launch auto-generated X-API-Token
 
 ---
