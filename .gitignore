@@ -17,3 +17,4 @@ __debug_bin
 vendor/
 *.log
 hyperspeed-browser-dev.exe
+AGENTS.md
