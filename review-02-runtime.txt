@@ -1,0 +1,4594 @@
+﻿// HYPERSPEED BROWSER — Runtime Optimizers
+
+//-- optimizer.go --
+package main
+
+import (
+	"container/heap"
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"runtime"
+	"runtime/debug"
+	"sort"
+	"strings"
+	"sync"
+	"time"
+)
+
+// =============================================================================
+// Optimizer - unified optimization engine
+// =============================================================================
+
+type Optimizer struct {
+	b     *browser
+	adapt *Adapt
+
+	mu      sync.RWMutex
+	enabled bool
+	profile OptimizerProfile
+
+	metrics    *MetricsCollector
+	csso       *CSSJSOptimizer
+	media      *MediaOptimizer
+	netq       *NetworkQueue
+	cache      *SmartCache
+	tuner      *AutoTuner
+	vd         *ValueDensityEngine
+	crg        *CRGEngine
+	quick      *QuickOptEngine
+	rhd        *RHDGCEngine
+	pvc        *PVCEngine
+	ehs        *EHSEngine
+	rpc        *RPCEngine
+	qse        *QSEEngine
+	lod        *LODEngine
+	uhe        *UHEngine
+	ndf        *NDFCache
+	autotune   *AutoTuneUHE
+	gcctl      *AdaptiveGCController
+	hlrc       *HLRC
+
+	// v3.2.0 Genesis engines
+	dna        *DNAEngine
+	hbm        *HBMEngine
+	avp        *AVPEngine
+	domCompress *DOMCompressEngine
+	ncg        *NCGEngine
+	pce        *PCEEngine
+	upm        *UPMEngine
+	dra        *DRAEngine
+	mcs        *MCSEngine
+	cbl        *CBLEngine
+	uee        *UEEEngine
+	hfs        *HFSEngine
+	rcm        *RCMEngine
+}
+
+type OptimizerProfile struct {
+	Name                 string `json:"name"`
+	SnapshotDepth        int    `json:"snapshotDepth"`
+	TurboBurstCount      int    `json:"turboBurstCount"`
+	TurboSlowIntervalMs  int    `json:"turboSlowIntervalMs"`
+	EvalTimeoutMs        int    `json:"evalTimeoutMs"`
+	CacheMaxEntries      int    `json:"cacheMaxEntries"`
+	CacheTTLMs           int    `json:"cacheTTLMs"`
+	NetworkMaxConcurrent int    `json:"networkMaxConcurrent"`
+	LazyLoadImages       bool   `json:"lazyLoadImages"`
+	DeferNonCriticalCSS  bool   `json:"deferNonCriticalCSS"`
+	DeferNonCriticalJS   bool   `json:"deferNonCriticalJS"`
+	RemoveTracking       bool   `json:"removeTracking"`
+	AutoTuneEnabled      bool   `json:"autoTuneEnabled"`
+}
+
+var defaultProfile = OptimizerProfile{
+	Name:                 "balanced",
+	SnapshotDepth:        12,
+	TurboBurstCount:      8,
+	TurboSlowIntervalMs:  4000,
+	EvalTimeoutMs:        10000,
+	CacheMaxEntries:      250,
+	CacheTTLMs:           90000,
+	NetworkMaxConcurrent: 6,
+	LazyLoadImages:       true,
+	DeferNonCriticalCSS:  true,
+	DeferNonCriticalJS:   true,
+	RemoveTracking:       true,
+	AutoTuneEnabled:      true,
+}
+
+var speedProfile = OptimizerProfile{
+	Name:                 "speed",
+	SnapshotDepth:        6,
+	TurboBurstCount:      4,
+	TurboSlowIntervalMs:  6000,
+	EvalTimeoutMs:        4000,
+	CacheMaxEntries:      800,
+	CacheTTLMs:           300000,
+	NetworkMaxConcurrent: 3,
+	LazyLoadImages:       true,
+	DeferNonCriticalCSS:  true,
+	DeferNonCriticalJS:   true,
+	RemoveTracking:       true,
+	AutoTuneEnabled:      true,
+}
+
+var compatProfile = OptimizerProfile{
+	Name:                 "compat",
+	SnapshotDepth:        15,
+	TurboBurstCount:      15,
+	TurboSlowIntervalMs:  2000,
+	EvalTimeoutMs:        15000,
+	CacheMaxEntries:      100,
+	CacheTTLMs:           30000,
+	NetworkMaxConcurrent: 8,
+	LazyLoadImages:       false,
+	DeferNonCriticalCSS:  false,
+	DeferNonCriticalJS:   false,
+	RemoveTracking:       false,
+	AutoTuneEnabled:      false,
+}
+
+var ecoProfile = OptimizerProfile{
+	Name:                 "eco",
+	SnapshotDepth:        10,
+	TurboBurstCount:      8,
+	TurboSlowIntervalMs:  5000,
+	EvalTimeoutMs:        15000,
+	CacheMaxEntries:      300,
+	CacheTTLMs:           120000,
+	NetworkMaxConcurrent: 3,
+	LazyLoadImages:       true,
+	DeferNonCriticalCSS:  true,
+	DeferNonCriticalJS:   true,
+	RemoveTracking:       true,
+	AutoTuneEnabled:      true,
+}
+
+var aggressiveProfile = OptimizerProfile{
+	Name:                 "aggressive",
+	SnapshotDepth:        5,
+	TurboBurstCount:      3,
+	TurboSlowIntervalMs:  8000,
+	EvalTimeoutMs:        3000,
+	CacheMaxEntries:      1000,
+	CacheTTLMs:           600000,
+	NetworkMaxConcurrent: 2,
+	LazyLoadImages:       true,
+	DeferNonCriticalCSS:  true,
+	DeferNonCriticalJS:   true,
+	RemoveTracking:       true,
+	AutoTuneEnabled:      true,
+}
+
+var turboProfile = OptimizerProfile{
+	Name:                 "turbo",
+	SnapshotDepth:        4,
+	TurboBurstCount:      2,
+	TurboSlowIntervalMs:  10000,
+	EvalTimeoutMs:        2000,
+	CacheMaxEntries:      1500,
+	CacheTTLMs:           900000,
+	NetworkMaxConcurrent: 1,
+	LazyLoadImages:       true,
+	DeferNonCriticalCSS:  true,
+	DeferNonCriticalJS:   true,
+	RemoveTracking:       true,
+	AutoTuneEnabled:      true,
+}
+
+var mobileProfile = OptimizerProfile{
+	Name:                 "mobile",
+	SnapshotDepth:        8,
+	TurboBurstCount:      5,
+	TurboSlowIntervalMs:  4000,
+	EvalTimeoutMs:        8000,
+	CacheMaxEntries:      400,
+	CacheTTLMs:           180000,
+	NetworkMaxConcurrent: 4,
+	LazyLoadImages:       true,
+	DeferNonCriticalCSS:  true,
+	DeferNonCriticalJS:   true,
+	RemoveTracking:       true,
+	AutoTuneEnabled:      true,
+}
+
+func NewOptimizer(b *browser) *Optimizer {
+	o := &Optimizer{
+		adapt: newAdapt(),
+		b:          b,
+		enabled:    true,
+		profile:    defaultProfile,
+		metrics:    NewMetricsCollector(b),
+		csso:       NewCSSJSOptimizer(b),
+		media:      NewMediaOptimizer(b),
+		netq:       NewNetworkQueue(b),
+		cache:      NewSmartCache(defaultProfile.CacheMaxEntries, defaultProfile.CacheTTLMs),
+		tuner:      NewAutoTuner(b),
+		vd:         NewValueDensityEngine(b),
+		crg:        NewCRGEngine(b),
+		quick:      NewQuickOptEngine(b),
+		rhd:        NewRHDGCEngine(b),
+		pvc:        NewPVCEngine(b),
+		ehs:        NewEHSEngine(b),
+		rpc:        NewRPCEngine(b),
+		qse:        NewQSEEngine(b),
+		lod:        NewLODEngine(b),
+		uhe:        NewUHEngine(),
+		ndf:        NewNDFCache(128),
+		autotune:   NewAutoTuneUHE(),
+		gcctl:      NewAdaptiveGCController(),
+		hlrc:       NewHLRC(),
+
+		// v3.2.0 Genesis
+		dna:        NewDNAEngine(b),
+		hbm:        NewHBMEngine(),
+		avp:        NewAVPEngine(b),
+		domCompress: NewDOMCompressEngine(b),
+		ncg:        NewNCGEngine(b),
+		pce:        NewPCEEngine(b),
+		upm:        NewUPMEngine(b),
+		dra:        NewDRAEngine(b),
+		mcs:        NewMCSEngine(b),
+		cbl:        NewCBLEngine(b),
+		uee:        NewUEEEngine(b),
+		hfs:        NewHFSEngine(b),
+		rcm:        NewRCMEngine(b),
+	}
+	o.uhe.SetHLRC(o.hlrc)
+	o.uhe.SetOptRef(o)
+	o.ndf.SetHLRC(o.hlrc)
+	o.cache.SetHLRC(o.hlrc)
+	o.hlrc.SetOptRef(o)
+	o.autotune.SetOptRef(o)
+	o.netq.maxConcurrent = defaultProfile.NetworkMaxConcurrent
+	o.autotune.Start()
+	o.gcctl.Start()
+	return o
+}
+
+func (o *Optimizer) ApplyProfile(name string) bool {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+
+	var p OptimizerProfile
+	switch name {
+	case "balanced":
+		p = defaultProfile
+	case "speed":
+		p = speedProfile
+	case "compat":
+		p = compatProfile
+	case "eco":
+		p = ecoProfile
+	case "aggressive":
+		p = aggressiveProfile
+	case "turbo":
+		p = turboProfile
+	case "mobile":
+		p = mobileProfile
+	default:
+		return false
+	}
+	o.profile = p
+	o.netq.maxConcurrent = p.NetworkMaxConcurrent
+	o.cache.Resize(p.CacheMaxEntries, p.CacheTTLMs)
+	return true
+}
+
+func (o *Optimizer) IsEnabled() bool {
+	o.mu.RLock()
+	defer o.mu.RUnlock()
+	return o.enabled
+}
+
+// ShouldRun returns true if the given engine should execute for the current page.
+func (o *Optimizer) ShouldRun(engine string) bool {
+	if o.adapt == nil || !o.enabled {
+		return true
+	}
+	return o.adapt.ShouldRun(engine)
+}
+
+func (o *Optimizer) SetEnabled(v bool) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	o.enabled = v
+}
+
+// =============================================================================
+// 1. MetricsCollector - thu tháº­p chá»‰ sá»‘ trang
+// =============================================================================
+
+type PageMetrics struct {
+	URL           string  `json:"url"`
+	LoadTimeMs    float64 `json:"loadTimeMs"`
+	DOMReadyMs    float64 `json:"domReadyMs"`
+	FirstPaintMs  float64 `json:"firstPaintMs"`
+	ResourceCount int     `json:"resourceCount"`
+	TotalSizeKB   float64 `json:"totalSizeKB"`
+	ScriptCount   int     `json:"scriptCount"`
+	StyleCount    int     `json:"styleCount"`
+	ImageCount    int     `json:"imageCount"`
+	RequestCount  int     `json:"requestCount"`
+	ErrorCount    int     `json:"errorCount"`
+	MemoryUsageMB float64 `json:"memoryUsageMB"`
+	DOMNodeCount  int     `json:"domNodeCount"`
+	Score         float64 `json:"score"`
+	CollectedAt   string  `json:"collectedAt"`
+}
+
+const metricsCollectJS = `(function(){
+var p=performance||{};
+var t=p.timing||{};
+var n=p.getEntriesByType?p.getEntriesByType('resource')||[]:[];
+var imgs=document.images.length;
+var scripts=document.scripts.length;
+var styles=document.styleSheets.length;
+var totalSize=n.reduce(function(s,e){return s+(e.transferSize||0)},0);
+var imgsCount=document.querySelectorAll('img,video,source').length;
+var errs=window.__networkLog?window.__networkLog.filter(function(r){return r.status>=400}).length:0;
+var nodes=document.querySelectorAll('*').length;
+var mem=performance.memory?performance.memory.usedJSHeapSize/1048576:0;
+var score=100;
+if(totalSize>2097152)score-=15;
+if(n.length>80)score-=10;
+if(imgsCount>40)score-=10;
+if(scripts>25)score-=5;
+if(nodes>2000)score-=10;
+if(errs>0)score-=errs*3;
+if(score<10)score=10;
+var m={
+loadTimeMs:(t.loadEventEnd-t.navigationStart)||0,
+domReadyMs:(t.domContentLoadedEventEnd-t.navigationStart)||0,
+firstPaintMs:p.getEntriesByType('paint').length?p.getEntriesByType('paint')[0].startTime:0,
+resourceCount:n.length,
+totalSizeKB:Math.round(totalSize/1024),
+scriptCount:scripts,
+styleCount:styles.length,
+imageCount:imgsCount,
+requestCount:n.length,
+errorCount:errs,
+memoryUsageMB:Math.round(mem*10)/10,
+domNodeCount:nodes,
+score:Math.max(10,Math.min(100,score))
+};
+window.__lastMetrics=m;
+return m;
+})()`
+
+func NewMetricsCollector(b *browser) *MetricsCollector {
+	return &MetricsCollector{b: b, history: make([]PageMetrics, 0, 50)}
+}
+
+type MetricsCollector struct {
+	b       *browser
+	mu      sync.Mutex
+	history []PageMetrics
+}
+
+func (mc *MetricsCollector) Collect() (*PageMetrics, error) {
+	raw, err := mc.b.syncUnwrap(metricsCollectJS, 10*time.Second)
+	if err != nil {
+		return nil, err
+	}
+	url := ""
+	if u, err2 := mc.b.syncUnwrap("location.href", 5*time.Second); err2 == nil {
+		url = fmt.Sprint(u)
+	}
+	var pm PageMetrics
+	if s, ok := raw.(string); ok {
+		json.Unmarshal([]byte(s), &pm)
+	} else if m, ok := raw.(map[string]interface{}); ok {
+		b, _ := json.Marshal(m)
+		json.Unmarshal(b, &pm)
+	}
+	pm.URL = url
+	pm.CollectedAt = time.Now().UTC().Format(time.RFC3339)
+
+	mc.mu.Lock()
+	mc.history = append(mc.history, pm)
+	if len(mc.history) > 50 {
+		mc.history = mc.history[len(mc.history)-50:]
+	}
+	mc.mu.Unlock()
+	return &pm, nil
+}
+
+func (mc *MetricsCollector) History() []PageMetrics {
+	mc.mu.Lock()
+	defer mc.mu.Unlock()
+	out := make([]PageMetrics, len(mc.history))
+	copy(out, mc.history)
+	return out
+}
+
+func (mc *MetricsCollector) Average() PageMetrics {
+	mc.mu.Lock()
+	n := len(mc.history)
+	if n == 0 {
+		mc.mu.Unlock()
+		return PageMetrics{Score: 100}
+	}
+	var lt, dr, tk, sc float64
+	var rc, scnt, ic, rqc, ec, dnc int
+	for _, m := range mc.history {
+		lt += m.LoadTimeMs
+		dr += m.DOMReadyMs
+		rc += m.ResourceCount
+		tk += m.TotalSizeKB
+		scnt += m.ScriptCount
+		ic += m.ImageCount
+		rqc += m.RequestCount
+		ec += m.ErrorCount
+		sc += m.Score
+		dnc += m.DOMNodeCount
+	}
+	mc.mu.Unlock()
+	nf := float64(n)
+	return PageMetrics{
+		LoadTimeMs:    lt / nf,
+		DOMReadyMs:    dr / nf,
+		ResourceCount: int(float64(rc) / nf),
+		TotalSizeKB:   tk / nf,
+		ScriptCount:   int(float64(scnt) / nf),
+		ImageCount:    int(float64(ic) / nf),
+		RequestCount:  int(float64(rqc) / nf),
+		ErrorCount:    int(float64(ec) / nf),
+		Score:         sc / nf,
+		DOMNodeCount:  int(float64(dnc) / nf),
+	}
+}
+
+const priorityInjectJS = `(function(){
+if(window.__mbPrioritySet)return;
+window.__mbPrioritySet=true;
+var B=['google-analytics.com','googletagmanager.com','doubleclick.net','facebook.net','adsystem','adservice'];
+function isB(u){return u?B.some(function(b){return u.indexOf(b)>=0}):false}
+var o=document.createElement('link');o.rel='preconnect';o.href='https://fonts.googleapis.com';document.head.appendChild(o);
+var links=document.querySelectorAll('link[rel=stylesheet]');for(var i=0;i<links.length;i++){
+if(i<2)links[i].media='all';else links[i].media='print';links[i].onload=function(){this.media='all'}}
+var imgs=document.querySelectorAll('img[loading=lazy]');for(var i=0;i<imgs.length;i++){
+var r=imgs[i].getBoundingClientRect();if(r.top<window.innerHeight+200)imgs[i].loading='eager'}
+})()`
+
+// =============================================================================
+// 3. CompilerTuner
+// =============================================================================
+
+type CompilerTuner struct {
+	GoVersion   string `json:"goVersion"`
+	GCPercent   int    `json:"gcPercent"`
+	NumCPU      int    `json:"numCPU"`
+	GOMAXPROCS  int    `json:"gomaxprocs"`
+	BuildMode   string `json:"buildMode"`
+	MemoryLimit int64  `json:"memoryLimit"`
+}
+
+func GetCompilerTuner() CompilerTuner {
+	var m runtime.MemStats
+	runtime.ReadMemStats(&m)
+	return CompilerTuner{
+		GoVersion:   runtime.Version(),
+		GCPercent:   int(debug.SetGCPercent(-1)),
+		NumCPU:      runtime.NumCPU(),
+		GOMAXPROCS:  runtime.GOMAXPROCS(0),
+		BuildMode:   "default",
+		MemoryLimit: int64(debug.SetMemoryLimit(-1)),
+	}
+}
+
+func TuneCompiler(profile string) {
+	switch profile {
+	case "speed":
+		debug.SetGCPercent(50)
+		debug.SetMemoryLimit(256 * 1024 * 1024)
+		runtime.GOMAXPROCS(runtime.NumCPU())
+	case "balanced":
+		debug.SetGCPercent(100)
+		debug.SetMemoryLimit(384 * 1024 * 1024)
+		runtime.GOMAXPROCS(runtime.NumCPU())
+	case "eco":
+		debug.SetGCPercent(150)
+		debug.SetMemoryLimit(256 * 1024 * 1024)
+		runtime.GOMAXPROCS(2)
+	case "compat":
+		debug.SetGCPercent(200)
+		debug.SetMemoryLimit(512 * 1024 * 1024)
+		runtime.GOMAXPROCS(1)
+	case "aggressive":
+		debug.SetGCPercent(30)
+		debug.SetMemoryLimit(192 * 1024 * 1024)
+		runtime.GOMAXPROCS(runtime.NumCPU())
+	case "turbo":
+		debug.SetGCPercent(15)
+		debug.SetMemoryLimit(128 * 1024 * 1024)
+		runtime.GOMAXPROCS(runtime.NumCPU())
+	case "mobile":
+		debug.SetGCPercent(80)
+		debug.SetMemoryLimit(256 * 1024 * 1024)
+		runtime.GOMAXPROCS(2)
+	}
+}
+
+// =============================================================================
+// 4. CSSJSOptimizer
+// =============================================================================
+
+type CSSJSOptimizer struct {
+	b *browser
+}
+
+func NewCSSJSOptimizer(b *browser) *CSSJSOptimizer {
+	return &CSSJSOptimizer{b: b}
+}
+
+const cssInject = `(function(){
+if(window.__mbCSMin)return;
+window.__mbCSMin=true;
+var s=document.createElement('style');s.id='__mb_css_overrides';
+s.textContent='img[loading=lazy]{content-visibility:auto}script[src][async],script[src][defer]{font-display:swap}';
+document.head.appendChild(s);
+var sheets=document.styleSheets;var used=new Set();
+try{for(var i=0;i<sheets.length;i++){var rules=sheets[i].cssRules;
+if(!rules)continue;for(var j=0;j<rules.length;j++){
+var sel=rules[j].selectorText;if(!sel)continue;
+try{if(document.querySelector(sel))used.add(i)}catch(e){}}}}
+catch(e){}
+var toRemove=[];for(var i=0;i<sheets.length;i++){
+if(sheets[i].href&&!used.has(i)&&sheets[i].cssRules&&sheets[i].cssRules.length>3){
+var link=document.querySelector('link[href="'+sheets[i].href+'"]');
+if(link&&link.media!='print')toRemove.push(sheets[i].href)}}
+window.__mbRemovedSheets=toRemove;
+if(toRemove.length>3){
+var removed=0;
+for(var i=0;i<toRemove.length;i++){
+var l=document.querySelector('link[href="'+toRemove[i]+'"]');
+if(l&&l.media!='print'){l.media='print';removed++}}
+window.__mbDeferredSheets=removed}
+})(),window.__mbCSSDone=1`
+
+const jsDeferInject = `(function(){
+if(window.__mbJSDefer)return;
+window.__mbJSDefer=true;
+var scripts=document.querySelectorAll('script[src]:not([async]):not([defer])');
+var count=0;
+for(var i=0;i<scripts.length;i++){
+var s=scripts[i];
+if(s.src&&!s.src.includes('polyfill')&&!s.src.includes('modernizr')){
+var cl=s.cloneNode(true);cl.defer=true;cl.async=false;
+s.parentNode.replaceChild(cl,s);count++}}
+window.__mbDeferredJSCount=count;
+})(),window.__mbJSDone=1`
+
+// =============================================================================
+// 5. MediaOptimizer - xá»­ lÃ½ áº£nh vÃ  Ä‘a phÆ°Æ¡ng tiá»‡n
+// =============================================================================
+
+type MediaOptimizer struct {
+	b *browser
+}
+
+func NewMediaOptimizer(b *browser) *MediaOptimizer {
+	return &MediaOptimizer{b: b}
+}
+
+const mediaInject = `(function(){
+if(window.__mbMediaOpt)return;
+window.__mbMediaOpt=true;
+var imgs=document.querySelectorAll('img:not([loading]),img[loading=eager]');
+for(var i=0;i<imgs.length;i++){
+var r=imgs[i].getBoundingClientRect();
+if(r.top>window.innerHeight+500)imgs[i].loading='lazy';
+if(imgs[i].width>800&&!imgs[i].srcSet){
+var s=imgs[i].src;if(s&&!s.includes('svg')&&!s.includes('data:')){
+var w=Math.round(Math.min(imgs[i].width,1200));
+imgs[i].sizes=w+'px';imgs[i].srcSet=s+'?w='+w+' '+w+'w'}}}
+var videos=document.querySelectorAll('video:not([preload])');
+for(var i=0;i<videos.length;i++)videos[i].preload='metadata';
+window.__mbMediaOptimized=imgs.length;
+})(),window.__mbMediaDone=1`
+
+// =============================================================================
+// 6. NetworkQueue
+// =============================================================================
+
+type Priority int
+
+type RequestItem struct {
+	ID        string    `json:"id"`
+	URL       string    `json:"url"`
+	Method    string    `json:"method"`
+	Priority  Priority  `json:"priority"`
+	Size      int       `json:"size"`
+	Status    string    `json:"status"`
+	CreatedAt time.Time `json:"createdAt"`
+	index     int
+}
+
+type PriorityQueue []*RequestItem
+
+func (pq PriorityQueue) Len() int { return len(pq) }
+func (pq PriorityQueue) Less(i, j int) bool {
+	if pq[i].Priority != pq[j].Priority {
+		return pq[i].Priority < pq[j].Priority
+	}
+	return pq[i].CreatedAt.Before(pq[j].CreatedAt)
+}
+func (pq PriorityQueue) Swap(i, j int) {
+	pq[i], pq[j] = pq[j], pq[i]
+	pq[i].index = i
+	pq[j].index = j
+}
+func (pq *PriorityQueue) Push(x interface{}) {
+	n := len(*pq)
+	item := x.(*RequestItem)
+	item.index = n
+	*pq = append(*pq, item)
+}
+func (pq *PriorityQueue) Pop() interface{} {
+	old := *pq
+	n := len(old)
+	item := old[n-1]
+	old[n-1] = nil
+	item.index = -1
+	*pq = old[:n-1]
+	return item
+}
+
+type NetworkQueue struct {
+	b              *browser
+	mu             sync.Mutex
+	queue          PriorityQueue
+	active         int
+	maxConcurrent  int
+	totalQueued    int
+	totalDropped   int
+	blockedDomains []string
+	
+	// Request coalescing
+	inflight map[string][]*RequestItem  // URL â†’ waiting requests
+	coalesced int
+}
+
+func NewNetworkQueue(b *browser) *NetworkQueue {
+	return &NetworkQueue{
+		b:             b,
+		queue:         make(PriorityQueue, 0),
+		maxConcurrent: 6,
+		blockedDomains: []string{},
+		inflight:      make(map[string][]*RequestItem),
+	}
+}
+
+func (nq *NetworkQueue) Enqueue(url, method string, priority Priority) {
+	nq.mu.Lock()
+	defer nq.mu.Unlock()
+
+	for _, d := range nq.blockedDomains {
+		if strings.Contains(url, d) {
+			nq.totalDropped++
+			return
+		}
+	}
+
+	item := &RequestItem{
+		ID:        fmt.Sprintf("rq_%d", nq.totalQueued),
+		URL:       url,
+		Method:    method,
+		Priority:  priority,
+		Status:    "queued",
+		CreatedAt: time.Now(),
+	}
+	nq.totalQueued++
+	
+	// Check if request already in-flight for this URL
+	if waiters, ok := nq.inflight[url]; ok {
+		// Piggyback on in-flight request
+		nq.inflight[url] = append(waiters, item)
+		nq.coalesced++
+		return
+	}
+	
+	// New request: mark as in-flight and queue
+	nq.inflight[url] = []*RequestItem{item}
+	heap.Push(&nq.queue, item)
+}
+
+func (nq *NetworkQueue) Stats() map[string]interface{} {
+	nq.mu.Lock()
+	defer nq.mu.Unlock()
+	return map[string]interface{}{
+		"queued":        nq.queue.Len(),
+		"active":        nq.active,
+		"maxConcurrent": nq.maxConcurrent,
+		"totalQueued":   nq.totalQueued,
+		"totalDropped":  nq.totalDropped,
+		"coalesced":     nq.coalesced,
+		"savings":       fmt.Sprintf("%d requests", nq.coalesced),
+	}
+}
+
+const networkThrottleJS = `(function(){
+if(window.__mbNetThrottle)return;
+window.__mbNetThrottle=true;
+var maxC=6,active=0,pending=[];
+var of=window.__origFetch||window.fetch;
+function process(){while(active<maxC&&pending.length){
+var p=pending.shift();active++;
+p._fetch().then(function(){active--;process()})['catch'](function(){active--;process()})}}
+window.fetch=function(u,o){
+var r={url:typeof u=='string'?u:(u&&u.url)||'',method:(o&&o.method)||'GET'};
+var p={_fetch:function(){return of.call(this,u,o)},url:r.url,method:r.method};
+var B=['google-analytics.com','googletagmanager.com','doubleclick.net','facebook.net'];
+for(var i=0;i<B.length;i++){if(r.url.indexOf(B[i])>=0)return Promise.resolve(new Response('',{status:204}))}
+pending.push(p);process();
+return new Promise(function(res){p._resolve=res})};
+window.__mbNetThrottleActive=function(){return{active:active,pending:pending.length,max:maxC}};
+})(),window.__mbNetThrottleDone=1`
+
+// =============================================================================
+// 7. SmartCache
+// =============================================================================
+
+type cacheEntry struct {
+	data      interface{}
+	size      int
+	createdAt time.Time
+	ttl       time.Duration
+	hitCount  int
+	lastAccess time.Time  // K=1: most recent access
+	kthAccess  time.Time  // K=2: 2nd most recent access (LRU-K)
+}
+
+type SmartCache struct {
+	mu      sync.RWMutex
+	entries map[string]*cacheEntry
+	maxSize int
+	ttl     time.Duration
+	hits    int64
+	misses  int64
+	evicted int64
+	hlrc    *HLRC
+}
+
+func (sc *SmartCache) SetHLRC(h *HLRC) { sc.hlrc = h }
+
+func NewSmartCache(maxEntries int, ttlMs int) *SmartCache {
+	return &SmartCache{
+		entries: make(map[string]*cacheEntry),
+		maxSize: maxEntries,
+		ttl:     time.Duration(ttlMs) * time.Millisecond,
+	}
+}
+
+func (sc *SmartCache) Get(key string) (interface{}, bool) {
+	sc.mu.Lock()
+	defer sc.mu.Unlock()
+
+	entry, ok := sc.entries[key]
+	if !ok {
+		sc.misses++
+		return nil, false
+	}
+	if time.Since(entry.createdAt) > entry.ttl {
+		delete(sc.entries, key)
+		sc.evicted++
+		return nil, false
+	}
+	entry.hitCount++
+	if !entry.lastAccess.IsZero() {
+		entry.kthAccess = entry.lastAccess
+	}
+	entry.lastAccess = time.Now()
+	sc.hits++
+	if sc.hlrc != nil {
+		sc.hlrc.Access(key)
+	}
+	return entry.data, true
+}
+
+func (sc *SmartCache) Set(key string, data interface{}, size int) {
+	sc.mu.Lock()
+	defer sc.mu.Unlock()
+
+	if len(sc.entries) >= sc.maxSize {
+		sc.evictOldest()
+	}
+
+	sc.entries[key] = &cacheEntry{
+		data:       data,
+		size:       size,
+		createdAt:  time.Now(),
+		ttl:        sc.ttl,
+		lastAccess: time.Now(),
+		kthAccess:  time.Time{},  // Not set until 2nd access
+	}
+	if sc.hlrc != nil {
+		sc.hlrc.Register(key, HLRCKindCache, uint32(size/1024))
+		sc.hlrc.Access(key)
+	}
+}
+
+func (sc *SmartCache) evictOldest() {
+	// LRU-K eviction: evict entry with oldest K-th access time
+	// K=2: use 2nd most recent access (or createdAt if <2 accesses)
+	var victimKey string
+	var victimRefTime time.Time
+	first := true
+	
+	for k, v := range sc.entries {
+		// Choose reference time: kthAccess if set, else createdAt
+		refTime := v.kthAccess
+		if refTime.IsZero() {
+			refTime = v.createdAt
+		}
+		
+		if first || refTime.Before(victimRefTime) {
+			victimKey = k
+			victimRefTime = refTime
+			first = false
+		}
+	}
+	
+	if victimKey != "" {
+		delete(sc.entries, victimKey)
+		sc.evicted++
+		// Batch evict expired entries too during scan
+		now := time.Now()
+		for k, v := range sc.entries {
+			if now.Sub(v.createdAt) > v.ttl {
+				delete(sc.entries, k)
+				sc.evicted++
+			}
+		}
+	}
+}
+
+func (sc *SmartCache) Resize(maxEntries int, ttlMs int) {
+	sc.mu.Lock()
+	defer sc.mu.Unlock()
+	sc.maxSize = maxEntries
+	sc.ttl = time.Duration(ttlMs) * time.Millisecond
+	if len(sc.entries) > maxEntries {
+		count := len(sc.entries) - maxEntries
+		for i := 0; i < count; i++ {
+			sc.evictOldest()
+		}
+	}
+}
+
+func (sc *SmartCache) Stats() map[string]interface{} {
+	sc.mu.RLock()
+	defer sc.mu.RUnlock()
+	return map[string]interface{}{
+		"size":    len(sc.entries),
+		"maxSize": sc.maxSize,
+		"hits":    sc.hits,
+		"misses":  sc.misses,
+		"evicted": sc.evicted,
+		"ttlMs":   sc.ttl.Milliseconds(),
+	}
+}
+
+func (sc *SmartCache) Clear() {
+	sc.mu.Lock()
+	defer sc.mu.Unlock()
+	sc.entries = make(map[string]*cacheEntry)
+}
+
+const cacheInjectJS = `(function(){
+if(window.__mbCacheInject)return;
+window.__mbCacheInject=true;
+var c={};
+try{c=JSON.parse(localStorage.getItem('__mb_cache')||'{}')}catch(e){}
+var pending={};
+var of=window.__origFetch||window.fetch;
+window.fetch=function(u,o){
+var key=typeof u=='string'?u:(u&&u.url)||'';
+if(!key||key.indexOf('http')!==0)return of.call(this,u,o);
+if(c[key]&&Date.now()-c[key].t<60000){return Promise.resolve(new Response(c[key].d,{status:200,headers:{'content-type':c[key].ct}}))}
+var p=of.call(this,u,o).then(function(r){
+var ct=r.headers.get('content-type')||'';
+if(r.ok&&ct&&(ct.includes('json')||ct.includes('text')||ct.includes('javascript'))){
+var cl=r.clone();cl.text().then(function(t){
+if(t.length<51200){c[key]={d:t,ct:ct,t:Date.now()}
+try{localStorage.setItem('__mb_cache',JSON.stringify(c))}catch(e){}}})['catch'](function(){})}
+return r});
+return p};
+})(),window.__mbCacheDone=1`
+
+// =============================================================================
+// 8. AutoTuner - kiá»ƒm tra há»“i quy vÃ  tá»± Ä‘á»™ng Ä‘iá»u chá»‰nh
+// =============================================================================
+
+type TuningRule struct {
+	Name      string  `json:"name"`
+	Metric    string  `json:"metric"`
+	Operator  string  `json:"operator"`
+	Threshold float64 `json:"threshold"`
+	Action    string  `json:"action"`
+	Enabled   bool    `json:"enabled"`
+}
+
+type AutoTuner struct {
+	b         *browser
+	mu        sync.Mutex
+	rules     []TuningRule
+	results   []TuneResult
+	snapshots []PageMetrics
+	enabled   bool
+}
+
+type TuneResult struct {
+	Rule        string      `json:"rule"`
+	Action      string      `json:"action"`
+	Before      PageMetrics `json:"before"`
+	After       PageMetrics `json:"after"`
+	Improvement float64     `json:"improvement"`
+	AppliedAt   string      `json:"appliedAt"`
+}
+
+func NewAutoTuner(b *browser) *AutoTuner {
+	return &AutoTuner{
+		b:       b,
+		enabled: true,
+		rules: []TuningRule{
+			{Name: "high-load-time", Metric: "loadTimeMs", Operator: ">", Threshold: 5000, Action: "enable-lazy-load", Enabled: true},
+			{Name: "too-many-requests", Metric: "requestCount", Operator: ">", Threshold: 60, Action: "enable-request-queue", Enabled: true},
+			{Name: "too-many-images", Metric: "imageCount", Operator: ">", Threshold: 30, Action: "enable-lazy-images", Enabled: true},
+			{Name: "large-dom", Metric: "domNodeCount", Operator: ">", Threshold: 2000, Action: "reduce-snapshot-depth", Enabled: true},
+			{Name: "memory-high", Metric: "memoryUsageMB", Operator: ">", Threshold: 200, Action: "force-gc", Enabled: true},
+			{Name: "too-many-errors", Metric: "errorCount", Operator: ">", Threshold: 5, Action: "block-trackers", Enabled: true},
+			{Name: "score-low", Metric: "score", Operator: "<", Threshold: 50, Action: "aggressive-optimize", Enabled: true},
+		},
+	}
+}
+
+func (at *AutoTuner) Evaluate(metrics *PageMetrics) []TuneResult {
+	if !at.enabled {
+		return nil
+	}
+	at.mu.Lock()
+	defer at.mu.Unlock()
+
+	at.snapshots = append(at.snapshots, *metrics)
+	if len(at.snapshots) > 20 {
+		at.snapshots = at.snapshots[len(at.snapshots)-20:]
+	}
+
+	var actions []TuneResult
+	for _, rule := range at.rules {
+		if !rule.Enabled {
+			continue
+		}
+		var val float64
+		switch rule.Metric {
+		case "loadTimeMs":
+			val = metrics.LoadTimeMs
+		case "requestCount":
+			val = float64(metrics.RequestCount)
+		case "imageCount":
+			val = float64(metrics.ImageCount)
+		case "domNodeCount":
+			val = float64(metrics.DOMNodeCount)
+		case "memoryUsageMB":
+			val = metrics.MemoryUsageMB
+		case "errorCount":
+			val = float64(metrics.ErrorCount)
+		case "score":
+			val = metrics.Score
+		}
+
+		triggered := false
+		switch rule.Operator {
+		case ">":
+			triggered = val > rule.Threshold
+		case "<":
+			triggered = val < rule.Threshold
+		case ">=":
+			triggered = val >= rule.Threshold
+		case "<=":
+			triggered = val <= rule.Threshold
+		}
+
+		if triggered {
+			result := TuneResult{
+				Rule:      rule.Name,
+				Action:    rule.Action,
+				Before:    *metrics,
+				AppliedAt: time.Now().UTC().Format(time.RFC3339),
+			}
+			at.applyAction(rule.Action)
+			actions = append(actions, result)
+		}
+	}
+
+	at.results = append(at.results, actions...)
+	if len(at.results) > 50 {
+		at.results = at.results[len(at.results)-50:]
+	}
+	return actions
+}
+
+func (at *AutoTuner) applyAction(action string) {
+	js := ""
+	switch action {
+	case "enable-lazy-load":
+		js = mediaInject
+	case "enable-lazy-images":
+		js = `document.querySelectorAll('img:not([loading])').forEach(function(i){i.loading='lazy'})`
+	case "enable-request-queue":
+		js = networkThrottleJS
+	case "reduce-snapshot-depth":
+	case "force-gc":
+		js = `if(window.gc)gc()`
+	case "block-trackers":
+		js = ``
+	case "aggressive-optimize":
+		js = cssInject + jsDeferInject + mediaInject
+	}
+	if js != "" {
+		at.b.syncExec(js)
+	}
+}
+
+func (at *AutoTuner) Results() []TuneResult {
+	at.mu.Lock()
+	defer at.mu.Unlock()
+	out := make([]TuneResult, len(at.results))
+	copy(out, at.results)
+	return out
+}
+
+// =============================================================================
+// HTTP API handlers
+// =============================================================================
+
+func (b *browser) handleOptimizerInfo(w http.ResponseWriter, r *http.Request) {
+	if b.opt == nil {
+		writeError(w, 503, "optimizer not initialized")
+		return
+	}
+	o := b.opt
+
+	avg := o.metrics.Average()
+	prof := o.profile
+	compileTune := GetCompilerTuner()
+
+	writeJSON(w, map[string]interface{}{
+		"ok":           true,
+		"enabled":      o.IsEnabled(),
+		"profile":      prof,
+		"compiler":     compileTune,
+		"avgMetrics":   avg,
+		"networkQueue": o.netq.Stats(),
+		"smartCache":   o.cache.Stats(),
+	})
+}
+
+func (b *browser) handleOptimizerMetrics(w http.ResponseWriter, r *http.Request) {
+	if b.opt == nil {
+		writeError(w, 503, "optimizer not initialized")
+		return
+	}
+	pm, err := b.opt.metrics.Collect()
+	if err != nil {
+		writeError(w, 500, err.Error())
+		return
+	}
+
+	actions := b.opt.tuner.Evaluate(pm)
+
+	response := map[string]interface{}{
+		"ok":      true,
+		"metrics": pm,
+	}
+	if len(actions) > 0 {
+		response["autoTuneActions"] = actions
+	}
+
+	writeJSON(w, response)
+}
+
+func (b *browser) handleOptimizerProfile(w http.ResponseWriter, r *http.Request) {
+	if b.opt == nil {
+		writeError(w, 503, "optimizer not initialized")
+		return
+	}
+	if r.Method != "POST" {
+		writeError(w, 405, "POST required")
+		return
+	}
+
+	var body struct {
+		Profile string `json:"profile"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, 400, "invalid JSON: "+err.Error())
+		return
+	}
+
+	if body.Profile == "" {
+		writeError(w, 400, "profile required (balanced/speed/compat)")
+		return
+	}
+
+	if !b.opt.ApplyProfile(body.Profile) {
+		writeError(w, 400, "unknown profile: "+body.Profile)
+		return
+	}
+	TuneCompiler(body.Profile)
+
+	writeJSON(w, map[string]interface{}{
+		"ok":      true,
+		"profile": b.opt.profile,
+	})
+}
+
+func (b *browser) handleOptimizerTune(w http.ResponseWriter, r *http.Request) {
+	if b.opt == nil {
+		writeError(w, 503, "optimizer not initialized")
+		return
+	}
+
+	results := b.opt.tuner.Results()
+
+	allMetrics := b.opt.metrics.History()
+
+	sort.Slice(allMetrics, func(i, j int) bool {
+		return allMetrics[i].CollectedAt < allMetrics[j].CollectedAt
+	})
+
+	var trend string
+	if len(allMetrics) >= 2 {
+		first := allMetrics[0]
+		last := allMetrics[len(allMetrics)-1]
+		if last.Score > first.Score {
+			trend = "improving"
+		} else if last.Score < first.Score {
+			trend = "degrading"
+		} else {
+			trend = "stable"
+		}
+	}
+
+	writeJSON(w, map[string]interface{}{
+		"ok":              true,
+		"trend":           trend,
+		"dataPoints":      len(allMetrics),
+		"autoTuneResults": results,
+	})
+}
+
+func (b *browser) handleOptimizerRunAll(w http.ResponseWriter, r *http.Request) {
+	if b.opt == nil {
+		writeError(w, 503, "optimizer not initialized")
+		return
+	}
+	if r.Method != "POST" {
+		writeError(w, 405, "POST required")
+		return
+	}
+
+	o := b.opt
+	r.Body.Close()
+	if !o.IsEnabled() {
+		writeError(w, 400, "optimizer disabled")
+		return
+	}
+
+	results := map[string]interface{}{}
+	errors := []string{}
+
+	if pm, err := o.metrics.Collect(); err == nil {
+		results["metrics"] = pm
+		tuneActions := o.tuner.Evaluate(pm)
+		if len(tuneActions) > 0 {
+			results["autoTune"] = tuneActions
+		}
+	} else {
+		errors = append(errors, "metrics: "+err.Error())
+	}
+
+	o.b.syncExec(priorityInjectJS)
+	results["priority"] = "injected"
+
+	o.b.syncExec(cssInject)
+	results["cssOptimize"] = "injected"
+
+	if o.profile.DeferNonCriticalJS {
+		o.b.syncExec(jsDeferInject)
+		results["jsDefer"] = "injected"
+	}
+
+	if o.profile.LazyLoadImages {
+		o.b.syncExec(mediaInject)
+		results["media"] = "injected"
+	}
+
+	if o.profile.RemoveTracking || o.profile.AutoTuneEnabled {
+		o.b.syncExec(networkThrottleJS)
+		results["networkThrottle"] = "injected"
+		o.b.syncExec(cacheInjectJS)
+		results["smartCache"] = "injected"
+	}
+
+	response := map[string]interface{}{
+		"ok":      true,
+		"results": results,
+	}
+	if len(errors) > 0 {
+		response["errors"] = errors
+	}
+	writeJSON(w, response)
+}
+
+// =============================================================================
+// JS injection all-in-one
+// =============================================================================
+
+const optimizerInitJS = `(function(){
+if(window.__mbOptInit)return;
+window.__mbOptInit=true;
+var t0=performance.now();
+try{
+(function(){
+var B=['google-analytics.com','googletagmanager.com','doubleclick.net','facebook.net','adsystem','adservice','scorecardresearch','hotjar','mouseflow'];
+function m(u){return u?B.some(function(b){return u.indexOf(b)>=0}):false}
+var of=window.__origFetch||window.fetch;
+window.fetch=function(i,o){var u=typeof i=='string'?i:(i&&i.url)||'';return m(u)?Promise.resolve(new Response('',{status:204})):of.call(this,i,o)};
+var Ox=XMLHttpRequest;if(!window.__mbXHRBlocked){window.__mbXHRBlocked=true;
+var X=Ox;XMLHttpRequest=function(){var x=new X(),bl=false;
+var op=x.open.bind(x);x.open=function(mtd,url){bl=m(url);if(!bl)op(mtd,url)};
+var sd=x.send.bind(x);x.send=function(b){if(!bl)sd(b)};return x}}
+})();
+(function(){
+var os=Storage.prototype.setItem;
+Storage.prototype.setItem=function(k,v){if(k[0]=='_')return;return os.call(this,k,v)};
+var css=document.createElement('style');
+css.textContent='img[loading=lazy]{content-visibility:auto}';
+document.head.appendChild(css);
+var imgs=document.querySelectorAll('img:not([loading])');
+for(var i=0;i<imgs.length;i++){
+var r=imgs[i].getBoundingClientRect();
+if(r.top>window.innerHeight+300)imgs[i].loading='lazy'}
+})();
+}catch(e){window.__mbOptErr=String(e)}
+window.__mbOptLoadTime=performance.now()-t0;
+})()`
+//-- hlrc.go --
+package main
+
+import (
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"sync"
+	"time"
+)
+
+// HLRC object kinds
+const (
+	HLRCKindTab     = "tab"
+	HLRCKindDOM     = "dom"
+	HLRCKindCache   = "cache"
+	HLRCKindNetwork = "network"
+	HLRCKindScript  = "script"
+	HLRCKindImage   = "image"
+	HLRCKindTimer   = "timer"
+	HLRCKindFont    = "font"
+)
+
+// HLRC LOD levels
+const (
+	HLRCLODFull    = 0
+	HLRCLODReduced = 1
+	HLRCLODSkeleton = 2
+	HLRCLODCold    = 3
+	HLRCLODEvicted = 4
+)
+
+// Heat constants (uint8 0-255)
+const (
+	HLRCHeatMax       = 255
+	HLRCHeatDecay     = 8
+	HLRCHeatAccess    = 32
+	HLRCHeatHotThresh = 180
+	HLRCHeatWarmThresh = 80
+)
+
+var hlrcLODNames = []string{"full", "reduced", "skeleton", "cold", "evicted"}
+
+// RTObject is the compact runtime object header (16 bytes critical, ~72 total)
+type RTObject struct {
+	Heat        uint8   `json:"heat"`
+	LODLevel    uint8   `json:"lodLevel"`
+	Flags       uint16  `json:"flags"`
+	LastAccess  uint32  `json:"lastAccessTick"`
+	RestoreCost uint32  `json:"restoreCostHint"`
+	DepCount    uint16  `json:"depCount"`
+
+	key       string
+	kind      string
+	createdAt time.Time
+
+	reuseProb  float64
+	interactProb float64
+	ramCost    int64
+	cpuCost    int64
+	gpuCost    int64
+	netCost    int64
+}
+
+const (
+	RTFlagActive  = 1 << 0
+	RTFlagPinned  = 1 << 1
+	RTFlagDirty   = 1 << 2
+)
+
+// HLRC is the Heat-LOD Runtime Core
+type HLRC struct {
+	mu      sync.RWMutex
+	enabled bool
+
+	optRef *Optimizer
+
+	// 256 bucket queue indexed by heat
+	buckets [HLRCHeatMax + 1]map[string]int
+
+	// All objects
+	objects map[string]*RTObject
+
+	// Conversion from float64 heat (UHE-style) to uint8
+	heatScale float64
+
+	tick       uint32
+	stopCh     chan struct{}
+	tickRate   time.Duration
+	lastTick   time.Time
+
+	// Budget targets
+	ramBudgetMB  int64
+	cpuBudgetPct float64
+
+	// Hysteresis map â€” object keys with demotion timestamps
+	hysteresis map[string]time.Time
+
+	// Hard safety cap to prevent OOM
+	maxObjects int
+
+	stats HLRCStats
+}
+
+type HLRCStats struct {
+	Objects     int    `json:"objects"`
+	Tick        uint32 `json:"tick"`
+	Enabled     bool   `json:"enabled"`
+	RAMBudgetMB int64  `json:"ramBudgetMB"`
+	RAMUsedMB   int64  `json:"ramUsedMB"`
+	LODCounts   [5]int `json:"lodCounts"`
+	Demotions   int64  `json:"demotions"`
+	Promotions  int64  `json:"promotions"`
+	Evictions   int64  `json:"evictions"`
+	Status      string `json:"status"`
+}
+
+func NewHLRC() *HLRC {
+	h := &HLRC{
+		enabled:    true,
+		objects:    make(map[string]*RTObject),
+		heatScale:  255.0,
+		tickRate:   10 * time.Second,
+		ramBudgetMB: 50,
+		cpuBudgetPct: 80,
+		hysteresis: make(map[string]time.Time),
+		maxObjects: 2000,
+	}
+	for i := 0; i <= HLRCHeatMax; i++ {
+		h.buckets[i] = make(map[string]int)
+	}
+	return h
+}
+
+func (h *HLRC) SetOptRef(o *Optimizer) { h.optRef = o }
+
+func (h *HLRC) Start() {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if !h.enabled || h.stopCh != nil {
+		return
+	}
+	h.stopCh = make(chan struct{})
+	go h.loop()
+}
+
+func (h *HLRC) Stop() {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.stopCh != nil {
+		close(h.stopCh)
+		h.stopCh = nil
+	}
+}
+
+func (h *HLRC) loop() {
+	ticker := time.NewTicker(h.tickRate)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ticker.C:
+			if h.optRef != nil && !h.optRef.ShouldRun("hlrc") {
+				continue
+			}
+			h.tick++
+			h.decayAll()
+			h.enforceBudgets()
+			h.cleanHysteresis()
+		case <-h.stopCh:
+			return
+		}
+	}
+}
+
+func (h *HLRC) decayAll() {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	now := time.Now()
+	for _, obj := range h.objects {
+		if obj.Flags&RTFlagPinned != 0 {
+			continue
+		}
+		oldHeat := obj.Heat
+		if obj.Heat > HLRCHeatDecay {
+			obj.Heat -= HLRCHeatDecay
+		} else {
+			obj.Heat = 0
+		}
+		if oldHeat != obj.Heat {
+			h.moveBucket(obj.key, oldHeat, obj.Heat)
+		}
+	}
+	h.lastTick = now
+	h.updateStats()
+}
+
+// Register adds a new runtime object to HLRC
+func (h *HLRC) Register(key, kind string, restoreCost uint32) *RTObject {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
+	if len(h.objects) >= h.maxObjects {
+		h.evictColdest(50)
+	}
+
+	obj := &RTObject{
+		Heat:        0,
+		LODLevel:    HLRCLODFull,
+		LastAccess:  h.tick,
+		RestoreCost: restoreCost,
+		key:         key,
+		kind:        kind,
+		createdAt:   time.Now(),
+		reuseProb:   0.5,
+		interactProb: 0.5,
+		ramCost:   int64(restoreCost),
+	}
+	if obj.ramCost < 100 {
+		obj.ramCost = 100
+	}
+	h.objects[key] = obj
+	h.buckets[0][key] = 1
+	return obj
+}
+
+// evictColdest removes N coldest entries when object cap is hit
+func (h *HLRC) evictColdest(n int) {
+	if n < 1 {
+		n = 1
+	}
+	var coldest []string
+	for heat := uint8(0); heat <= HLRCHeatMax && len(coldest) < n; heat++ {
+		for key := range h.buckets[heat] {
+			coldest = append(coldest, key)
+			if len(coldest) >= n {
+				break
+			}
+		}
+	}
+	for _, key := range coldest {
+		if obj, ok := h.objects[key]; ok {
+			delete(h.buckets[obj.Heat], key)
+			delete(h.objects, key)
+			delete(h.hysteresis, key)
+		}
+	}
+}
+
+// cleanHysteresis removes hysteresis entries older than 60s
+func (h *HLRC) cleanHysteresis() {
+	cutoff := time.Now().Add(-60 * time.Second)
+	for key, t := range h.hysteresis {
+		if t.Before(cutoff) {
+			delete(h.hysteresis, key)
+		}
+	}
+}
+
+// Access boosts an object's heat
+func (h *HLRC) Access(key string) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
+	obj, ok := h.objects[key]
+	if !ok {
+		return
+	}
+	oldHeat := obj.Heat
+	if int(obj.Heat)+HLRCHeatAccess > HLRCHeatMax {
+		obj.Heat = HLRCHeatMax
+	} else {
+		obj.Heat += HLRCHeatAccess
+	}
+	obj.LastAccess = h.tick
+	if oldHeat != obj.Heat {
+		h.moveBucket(key, oldHeat, obj.Heat)
+	}
+}
+
+// UpdateCosts sets utility density parameters for an object
+func (h *HLRC) UpdateCosts(key string, reuseProb, interactProb float64, ramCost, cpuCost, gpuCost, netCost int64) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	obj, ok := h.objects[key]
+	if !ok {
+		return
+	}
+	obj.reuseProb = reuseProb
+	obj.interactProb = interactProb
+	obj.ramCost = ramCost
+	obj.cpuCost = cpuCost
+	obj.gpuCost = gpuCost
+	obj.netCost = netCost
+}
+
+// SetLODLevel changes an object's LOD level
+func (h *HLRC) SetLODLevel(key string, level uint8) bool {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	obj, ok := h.objects[key]
+	if !ok || level > HLRCLODEvicted {
+		return false
+	}
+	obj.LODLevel = level
+	return true
+}
+
+// SetFlags sets bit flags on an object
+func (h *HLRC) SetFlags(key string, flags uint16) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if obj, ok := h.objects[key]; ok {
+		obj.Flags = flags
+	}
+}
+
+// Unregister removes an object
+func (h *HLRC) Unregister(key string) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	obj, ok := h.objects[key]
+	if !ok {
+		return
+	}
+	delete(h.buckets[obj.Heat], key)
+	delete(h.objects, key)
+	delete(h.hysteresis, key)
+}
+
+// computeUtilityDensity returns (density, low) for an object
+// low = true if density is below eviction threshold
+func (h *HLRC) computeUtilityDensity(obj *RTObject) (float64, bool) {
+	if obj.Flags&RTFlagPinned != 0 {
+		return 1.0, false
+	}
+
+	expectedValue := float64(obj.Heat) / HLRCHeatMax
+
+	reuseProb := obj.reuseProb
+	if reuseProb < 0.01 {
+		reuseProb = 0.01
+	}
+	interactProb := obj.interactProb
+	if interactProb < 0.01 {
+		interactProb = 0.01
+	}
+
+	numerator := expectedValue * reuseProb * interactProb
+
+	totalCost := float64(obj.ramCost+1) +
+		0.5*float64(obj.cpuCost+1) +
+		0.3*float64(obj.gpuCost+1) +
+		0.2*float64(obj.RestoreCost+1)
+
+	density := numerator / totalCost
+	return density, density < 0.001
+}
+
+// moveBucket moves an object from oldHeat to newHeat bucket
+// Caller must hold h.mu.Lock()
+func (h *HLRC) moveBucket(key string, oldHeat, newHeat uint8) {
+	if oldHeat > HLRCHeatMax {
+		oldHeat = HLRCHeatMax
+	}
+	if newHeat > HLRCHeatMax {
+		newHeat = HLRCHeatMax
+	}
+	delete(h.buckets[oldHeat], key)
+	h.buckets[newHeat][key] = 1
+}
+
+// enforceBudgets checks RAM and CPU budgets and demotes low-density objects
+func (h *HLRC) enforceBudgets() {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
+	ramUsed := int64(0)
+	for _, obj := range h.objects {
+		ramUsed += obj.ramCost
+	}
+	ramBudget := h.ramBudgetMB * 1024 * 1024
+
+	if ramUsed <= ramBudget {
+		return
+	}
+
+	excess := ramUsed - ramBudget
+	demoted := 0
+	now := time.Now()
+
+	// Scan from coldest bucket upward
+	for heat := uint8(0); heat <= HLRCHeatMax && excess > 0; heat++ {
+		for key := range h.buckets[heat] {
+			obj, ok := h.objects[key]
+			if !ok || obj.Flags&RTFlagPinned != 0 {
+				continue
+			}
+
+			// Hysteresis: skip if demoted within last 30s
+			if t, ok := h.hysteresis[key]; ok && now.Sub(t) < 30*time.Second {
+				continue
+			}
+
+			_, low := h.computeUtilityDensity(obj)
+			if low {
+				if obj.LODLevel < HLRCLODEvicted {
+					obj.LODLevel++
+					excess -= obj.ramCost / 2
+					h.hysteresis[key] = now
+					h.stats.Demotions++
+					demoted++
+				} else {
+					delete(h.buckets[obj.Heat], key)
+					delete(h.objects, key)
+					delete(h.hysteresis, key)
+					excess -= obj.ramCost
+					h.stats.Evictions++
+				}
+			}
+		}
+	}
+
+	h.updateStats()
+}
+
+// Promote increases LOD level based on high heat
+func (h *HLRC) Promote(key string) bool {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	obj, ok := h.objects[key]
+	if !ok || obj.LODLevel == 0 {
+		return false
+	}
+	obj.LODLevel--
+	h.stats.Promotions++
+	return true
+}
+
+func (h *HLRC) updateStats() {
+	h.stats.Objects = len(h.objects)
+	h.stats.Tick = h.tick
+	h.stats.Enabled = h.enabled
+	h.stats.RAMBudgetMB = h.ramBudgetMB
+	h.stats.Status = "active"
+	if !h.enabled {
+		h.stats.Status = "disabled"
+	}
+
+	ramUsed := int64(0)
+	for i := 0; i < 5; i++ {
+		h.stats.LODCounts[i] = 0
+	}
+	for _, obj := range h.objects {
+		ramUsed += obj.ramCost
+		if obj.LODLevel <= HLRCLODEvicted {
+			h.stats.LODCounts[obj.LODLevel]++
+		}
+	}
+	h.stats.RAMUsedMB = ramUsed / (1024 * 1024)
+}
+
+// Gather returns current stats
+func (h *HLRC) Gather() *HLRCStats {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	s := h.stats
+	s.LODCounts = [5]int{}
+	for _, obj := range h.objects {
+		if obj.LODLevel <= HLRCLODEvicted {
+			s.LODCounts[obj.LODLevel]++
+		}
+	}
+	return &s
+}
+
+// ObjectSnapshot returns all objects as a serializable slice
+func (h *HLRC) ObjectSnapshot() []map[string]interface{} {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	out := make([]map[string]interface{}, 0, len(h.objects))
+	for _, obj := range h.objects {
+		density, _ := h.computeUtilityDensity(obj)
+		out = append(out, map[string]interface{}{
+			"key":         obj.key,
+			"kind":        obj.kind,
+			"heat":        obj.Heat,
+			"lodLevel":    obj.LODLevel,
+			"lodLabel":    hlrcLODNames[obj.LODLevel],
+			"flags":       obj.Flags,
+			"lastAccess":  obj.LastAccess,
+			"restoreCost": obj.RestoreCost,
+			"depCount":    obj.DepCount,
+			"utilityDensity": fmt.Sprintf("%.6f", density),
+		})
+	}
+	return out
+}
+
+// SetConfig updates runtime budgets
+func (h *HLRC) SetConfig(ramMB int64, cpuPct float64) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if ramMB > 0 {
+		h.ramBudgetMB = ramMB
+	}
+	if cpuPct > 0 && cpuPct <= 100 {
+		h.cpuBudgetPct = cpuPct
+	}
+}
+
+// ---------------------------------------------------------------------------
+// API handlers
+// ---------------------------------------------------------------------------
+
+func (b *browser) handleHLRCStats(w http.ResponseWriter, r *http.Request) {
+	if b.opt == nil || b.opt.hlrc == nil {
+		writeError(w, 503, "HLRC not init")
+		return
+	}
+	s := b.opt.hlrc.Gather()
+	writeJSON(w, map[string]interface{}{"ok": true, "stats": s})
+}
+
+func (b *browser) handleHLRCObjects(w http.ResponseWriter, r *http.Request) {
+	if b.opt == nil || b.opt.hlrc == nil {
+		writeError(w, 503, "HLRC not init")
+		return
+	}
+	objs := b.opt.hlrc.ObjectSnapshot()
+	writeJSON(w, map[string]interface{}{"ok": true, "objects": objs})
+}
+
+func (b *browser) handleHLRCAccess(w http.ResponseWriter, r *http.Request) {
+	if b.opt == nil || b.opt.hlrc == nil {
+		writeError(w, 503, "HLRC not init")
+		return
+	}
+	if r.Method != "POST" {
+		writeError(w, 405, "POST required")
+		return
+	}
+	var req struct {
+		Key string `json:"key"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, 400, "bad request")
+		return
+	}
+	b.opt.hlrc.Access(req.Key)
+	writeJSON(w, map[string]interface{}{"ok": true})
+}
+
+func (b *browser) handleHLRCConfig(w http.ResponseWriter, r *http.Request) {
+	if b.opt == nil || b.opt.hlrc == nil {
+		writeError(w, 503, "HLRC not init")
+		return
+	}
+	if r.Method != "POST" {
+		writeError(w, 405, "POST required")
+		return
+	}
+	var req struct {
+		RAMBudgetMB int64   `json:"ramBudgetMB"`
+		CPUBudgetPct float64 `json:"cpuBudgetPct"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, 400, "bad request")
+		return
+	}
+	b.opt.hlrc.SetConfig(req.RAMBudgetMB, req.CPUBudgetPct)
+	writeJSON(w, map[string]interface{}{"ok": true})
+}
+
+func (b *browser) handleHLRCRegister(w http.ResponseWriter, r *http.Request) {
+	if b.opt == nil || b.opt.hlrc == nil {
+		writeError(w, 503, "HLRC not init")
+		return
+	}
+	if r.Method != "POST" {
+		writeError(w, 405, "POST required")
+		return
+	}
+	var req struct {
+		Key         string `json:"key"`
+		Kind        string `json:"kind"`
+		RestoreCost uint32 `json:"restoreCost"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, 400, "bad request")
+		return
+	}
+	b.opt.hlrc.Register(req.Key, req.Kind, req.RestoreCost)
+	writeJSON(w, map[string]interface{}{"ok": true})
+}
+
+func (h *HLRC) String() string {
+	s := h.Gather()
+	return fmt.Sprintf("HLRC: %d objects, %d demotions, RAM %d/%dMB tick=%d",
+		s.Objects, s.Demotions, s.RAMUsedMB, s.RAMBudgetMB, s.Tick)
+}
+//-- uhe.go --
+package main
+
+import (
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"sort"
+	"strings"
+	"sync"
+	"time"
+)
+
+type HeatEntry struct {
+	Key        string    `json:"key"`
+	Kind       string    `json:"kind"`
+	Heat       float64   `json:"heat"`
+	Accesses   uint64    `json:"accesses"`
+	LastAccess time.Time `json:"-"`
+	Created    time.Time `json:"-"`
+}
+
+type UHEngine struct {
+	mu         sync.RWMutex
+	enabled    bool
+	entries    map[string]*HeatEntry
+	decayRate  float64
+	accessHeat float64
+	maxHeat    float64
+	coolThresh float64
+	hotThresh  float64
+	stopCh     chan struct{}
+	stats      UHEStats
+	hlrc       *HLRC
+	maxEntries int
+	optRef     *Optimizer
+}
+
+type UHEStats struct {
+	Total   int                `json:"total"`
+	Hot     int                `json:"hot"`
+	Warm    int                `json:"warm"`
+	Cool    int                `json:"cool"`
+	Dom     int                `json:"dom"`
+	Script  int                `json:"script"`
+	Cache   int                `json:"cache"`
+	Network int                `json:"network"`
+	Image   int                `json:"image"`
+	Tab     int                `json:"tab"`
+	Top5    []HeatSummary      `json:"top5"`
+	Status  string             `json:"status"`
+}
+
+type HeatSummary struct {
+	Key  string  `json:"key"`
+	Kind string  `json:"kind"`
+	Heat float64 `json:"heat"`
+}
+
+func NewUHEngine() *UHEngine {
+	return &UHEngine{
+		entries:    make(map[string]*HeatEntry),
+		decayRate:  0.02,
+		accessHeat: 0.15,
+		maxHeat:    1.0,
+		coolThresh: 0.15,
+		hotThresh:  0.6,
+		enabled:    true,
+		maxEntries: 5000,
+	}
+}
+
+func (u *UHEngine) SetHLRC(h *HLRC) { u.hlrc = h }
+func (u *UHEngine) SetOptRef(o *Optimizer) { u.optRef = o }
+
+func (u *UHEngine) Start() {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	if !u.enabled || u.stopCh != nil {
+		return
+	}
+	u.stopCh = make(chan struct{})
+	go u.loop()
+}
+
+func (u *UHEngine) Stop() {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	if u.stopCh != nil {
+		close(u.stopCh)
+		u.stopCh = nil
+	}
+}
+
+func (u *UHEngine) SetEnabled(v bool) {
+	u.mu.Lock()
+	u.enabled = v
+	u.mu.Unlock()
+	if v {
+		u.Start()
+	} else {
+		u.Stop()
+	}
+}
+
+func (u *UHEngine) loop() {
+	ticker := time.NewTicker(5 * time.Second)
+	defer ticker.Stop()
+	cleanupTicker := time.NewTicker(5 * time.Minute)
+	defer cleanupTicker.Stop()
+	for {
+		select {
+		case <-ticker.C:
+			if u.optRef != nil && !u.optRef.ShouldRun("uhe") {
+				continue
+			}
+			u.decayAll()
+		case <-cleanupTicker.C:
+			removed := u.RemoveStale(30 * time.Minute)
+			if removed > 0 {
+				fmt.Printf("[UHE] Removed %d stale entries (total: %d)\n", removed, len(u.entries))
+			}
+		case <-u.stopCh:
+			return
+		}
+	}
+}
+
+func (u *UHEngine) decayAll() {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	now := time.Now()
+	for _, e := range u.entries {
+		elapsed := now.Sub(e.LastAccess).Seconds()
+		if elapsed < 1 {
+			continue
+		}
+		decay := u.decayRate * elapsed
+		e.Heat = max(0, e.Heat-decay)
+	}
+}
+
+func (u *UHEngine) Access(key, kind string) {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	if len(u.entries) >= u.maxEntries {
+		u.evictColdest(100)
+	}
+	e, ok := u.entries[key]
+	if !ok {
+		e = &HeatEntry{
+			Key:        key,
+			Kind:       kind,
+			Heat:       0,
+			Accesses:   0,
+			LastAccess: time.Now(),
+			Created:    time.Now(),
+		}
+		u.entries[key] = e
+		if u.hlrc != nil {
+			rc := uint32(50)
+			if kind == "dom" {
+				rc = 100
+			}
+			u.hlrc.Register(key, kind, rc)
+		}
+	}
+	e.Heat = min(u.maxHeat, e.Heat+u.accessHeat)
+	e.Accesses++
+	e.LastAccess = time.Now()
+	if u.hlrc != nil {
+		u.hlrc.Access(key)
+	}
+}
+
+func (u *UHEngine) getHeat(key string) float64 {
+	u.mu.RLock()
+	defer u.mu.RUnlock()
+	if e, ok := u.entries[key]; ok {
+		return e.Heat
+	}
+	return 0
+}
+
+func (u *UHEngine) IsHot(key string) bool {
+	return u.getHeat(key) >= u.hotThresh
+}
+
+func (u *UHEngine) IsCool(key string) bool {
+	return u.getHeat(key) <= u.coolThresh
+}
+
+func (u *UHEngine) HotCount() int {
+	u.mu.RLock()
+	defer u.mu.RUnlock()
+	c := 0
+	for _, e := range u.entries {
+		if e.Heat >= u.hotThresh {
+			c++
+		}
+	}
+	return c
+}
+
+func (u *UHEngine) TopN(n int) []HeatEntry {
+	u.mu.RLock()
+	defer u.mu.RUnlock()
+	if len(u.entries) == 0 {
+		return nil
+	}
+	sorted := make([]*HeatEntry, 0, len(u.entries))
+	for _, e := range u.entries {
+		sorted = append(sorted, e)
+	}
+	sort.Slice(sorted, func(i, j int) bool {
+		return sorted[i].Heat > sorted[j].Heat
+	})
+	if n > len(sorted) {
+		n = len(sorted)
+	}
+	out := make([]HeatEntry, n)
+	for i := 0; i < n; i++ {
+		out[i] = *sorted[i]
+	}
+	return out
+}
+
+func (u *UHEngine) evictColdest(n int) {
+	var keys []string
+	now := time.Now()
+	for k, e := range u.entries {
+		if now.Sub(e.LastAccess) > 10*time.Minute && e.Heat < u.coolThresh {
+			keys = append(keys, k)
+			if len(keys) >= n {
+				break
+			}
+		}
+	}
+	if len(keys) < n {
+		// Fallback: evict oldest entries regardless of heat
+		oldest := make([]string, 0)
+		for k, e := range u.entries {
+			if len(oldest) < n {
+				oldest = append(oldest, k)
+			} else {
+				// Simple replacement: scan again for older
+				for i, ok := range oldest {
+					if e.LastAccess.Before(u.entries[ok].LastAccess) {
+						oldest[i] = k
+						break
+					}
+				}
+			}
+		}
+		for _, k := range oldest {
+			if len(keys) >= n {
+				break
+			}
+			keys = append(keys, k)
+		}
+	}
+	for _, k := range keys {
+		delete(u.entries, k)
+	}
+}
+
+func (u *UHEngine) Gather() *UHEStats {
+	u.mu.RLock()
+	defer u.mu.RUnlock()
+	s := &UHEStats{
+		Total:  len(u.entries),
+		Status: "active",
+	}
+	for _, e := range u.entries {
+		if e.Heat >= u.hotThresh {
+			s.Hot++
+		} else if e.Heat > u.coolThresh {
+			s.Warm++
+		} else {
+			s.Cool++
+		}
+		switch e.Kind {
+		case "dom":
+			s.Dom++
+		case "script":
+			s.Script++
+		case "cache":
+			s.Cache++
+		case "network":
+			s.Network++
+		case "image":
+			s.Image++
+		case "tab":
+			s.Tab++
+		}
+	}
+	top := u.TopN(5)
+	for _, t := range top {
+		if len(s.Top5) < 5 {
+			s.Top5 = append(s.Top5, HeatSummary{Key: t.Key, Kind: t.Kind, Heat: t.Heat})
+		}
+	}
+	return s
+}
+
+func (u *UHEngine) RemoveStale(olderThan time.Duration) int {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	cutoff := time.Now().Add(-olderThan)
+	count := 0
+	for k, e := range u.entries {
+		if e.LastAccess.Before(cutoff) && e.Heat < u.coolThresh {
+			delete(u.entries, k)
+			count++
+		}
+	}
+	return count
+}
+
+func (u *UHEngine) Clear() {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	u.entries = make(map[string]*HeatEntry)
+}
+
+func (b *browser) handleUHEStart(w http.ResponseWriter, r *http.Request) {
+	if b.opt == nil || b.opt.uhe == nil {
+		writeError(w, 503, "UHE not init")
+		return
+	}
+	b.opt.uhe.Start()
+	writeJSON(w, map[string]interface{}{"ok": true, "msg": "UHE started"})
+}
+
+func (b *browser) handleUHEStats(w http.ResponseWriter, r *http.Request) {
+	if b.opt == nil || b.opt.uhe == nil {
+		writeError(w, 503, "UHE not init")
+		return
+	}
+	s := b.opt.uhe.Gather()
+	writeJSON(w, map[string]interface{}{"ok": true, "stats": s})
+}
+
+func (b *browser) handleUHEAccess(w http.ResponseWriter, r *http.Request) {
+	if b.opt == nil || b.opt.uhe == nil {
+		writeError(w, 503, "UHE not init")
+		return
+	}
+	if r.Method != "POST" {
+		writeError(w, 405, "POST required")
+		return
+	}
+	var req struct {
+		Key  string `json:"key"`
+		Kind string `json:"kind"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, 400, "bad request")
+		return
+	}
+	b.opt.uhe.Access(req.Key, req.Kind)
+	writeJSON(w, map[string]interface{}{"ok": true, "heat": b.opt.uhe.getHeat(req.Key)})
+}
+
+func (b *browser) handleUHETop(w http.ResponseWriter, r *http.Request) {
+	if b.opt == nil || b.opt.uhe == nil {
+		writeError(w, 503, "UHE not init")
+		return
+	}
+	top := b.opt.uhe.TopN(10)
+	writeJSON(w, map[string]interface{}{"ok": true, "top": top})
+}
+
+func (b *browser) handleUHE(w http.ResponseWriter, r *http.Request) {
+	if b.opt == nil || b.opt.uhe == nil {
+		writeError(w, 503, "UHE not init")
+		return
+	}
+	switch r.Method {
+	case "GET":
+		s := b.opt.uhe.Gather()
+		writeJSON(w, map[string]interface{}{"ok": true, "stats": s})
+	case "POST":
+		var req struct {
+			Action string `json:"action"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeError(w, 400, "bad request")
+			return
+		}
+		switch req.Action {
+		case "start":
+			b.opt.uhe.Start()
+			writeJSON(w, map[string]interface{}{"ok": true, "msg": "UHE started"})
+		case "stop":
+			b.opt.uhe.Stop()
+			writeJSON(w, map[string]interface{}{"ok": true, "msg": "UHE stopped"})
+		case "clear":
+			b.opt.uhe.Clear()
+			writeJSON(w, map[string]interface{}{"ok": true, "msg": "UHE cleared"})
+		default:
+			writeError(w, 400, "unknown action")
+		}
+	default:
+		writeError(w, 405, "use GET or POST")
+	}
+}
+
+func (u *UHEngine) HandleAPI(prefix string) http.Handler {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		path := strings.TrimPrefix(r.URL.Path, prefix)
+		switch path {
+		case "/start":
+			u.Start()
+			writeJSON(w, map[string]interface{}{"ok": true, "msg": "UHE started"})
+		case "/stats":
+			s := u.Gather()
+			writeJSON(w, map[string]interface{}{"ok": true, "stats": s})
+		case "/access":
+			handleJSON(w, r, func(req struct{ Key, Kind string }) {
+				u.Access(req.Key, req.Kind)
+				writeJSON(w, map[string]interface{}{"ok": true, "heat": u.getHeat(req.Key)})
+			})
+		default:
+			writeJSON(w, map[string]interface{}{"ok": false, "error": "unknown UHE path"})
+		}
+	})
+	return mux
+}
+
+func handleJSON[T any](w http.ResponseWriter, r *http.Request, fn func(T)) {
+	var req T
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, 400, "bad request")
+		return
+	}
+	fn(req)
+}
+
+func (u *UHEngine) String() string {
+	s := u.Gather()
+	return fmt.Sprintf("UHE: %d entries (%d hot, %d warm, %d cool)", s.Total, s.Hot, s.Warm, s.Cool)
+}
+//-- ndf.go --
+package main
+
+import (
+	"context"
+	"crypto/md5"
+	"fmt"
+	"io"
+	"net/http"
+	"sort"
+	"sync"
+	"time"
+)
+
+// NetworkDeltaFetch (NDF) - cache only changed bytes
+type NDFCache struct {
+	mu       sync.RWMutex
+	entries  map[string]*NDFEntry
+	maxSize  int64
+	currSize int64
+	hlrc     *HLRC
+}
+
+func (n *NDFCache) SetHLRC(h *HLRC) { n.hlrc = h }
+
+type NDFEntry struct {
+	URL          string
+	ETag         string
+	LastModified string
+	Hash         string
+	Data         []byte
+	Size         int64
+	Accesses     uint64
+	LastAccess   time.Time
+	Created      time.Time
+	HitCount     int64
+}
+
+func NewNDFCache(maxMB int64) *NDFCache {
+	return &NDFCache{
+		entries: make(map[string]*NDFEntry),
+		maxSize: maxMB * 1024 * 1024,
+	}
+}
+
+func (n *NDFCache) Fetch(url string, onData func([]byte, bool) error) (*NDFEntry, error) {
+	n.mu.RLock()
+	cached := n.entries[url]
+	n.mu.RUnlock()
+
+	// Build request headers
+	headers := make(http.Header)
+	if cached != nil && cached.ETag != "" {
+		headers.Set("If-None-Match", cached.ETag)
+	}
+	if cached != nil && cached.LastModified != "" {
+		headers.Set("If-Modified-Since", cached.LastModified)
+	}
+
+	// Fetch from remote
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	req, _ := http.NewRequestWithContext(ctx, "GET", url, nil)
+	for k, v := range headers {
+		req.Header[k] = v
+	}
+	client := &http.Client{Timeout: 30 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		if cached != nil {
+			n.mu.Lock()
+			e, ok := n.entries[url]
+			n.mu.Unlock()
+			if ok {
+				e.Accesses++
+				e.LastAccess = time.Now()
+				return e, nil
+			}
+			return cached, nil
+		}
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	// 304 Not Modified
+	if resp.StatusCode == http.StatusNotModified {
+		if cached != nil {
+			n.mu.Lock()
+			e, ok := n.entries[url]
+			n.mu.Unlock()
+			if ok {
+				e.Accesses++
+				e.LastAccess = time.Now()
+				e.HitCount++
+				if n.hlrc != nil {
+					n.hlrc.Access(url)
+				}
+				if onData != nil {
+					onData(e.Data, true)
+				}
+				return e, nil
+			}
+			if onData != nil {
+				onData(cached.Data, true)
+			}
+			return cached, nil
+		}
+	}
+
+	// Download full response
+	if resp.StatusCode == http.StatusOK {
+		data, err := io.ReadAll(resp.Body)
+		if err != nil {
+			if cached != nil {
+				n.mu.Lock()
+				e, ok := n.entries[url]
+				n.mu.Unlock()
+				if ok {
+					e.Accesses++
+					e.LastAccess = time.Now()
+					e.HitCount++
+					return e, nil
+				}
+				return cached, nil
+			}
+			return nil, err
+		}
+		hash := fmt.Sprintf("%x", md5.Sum(data))
+
+		n.mu.Lock()
+		existing, exists := n.entries[url]
+		if exists && existing.Hash == hash {
+			existing.Accesses++
+			existing.LastAccess = time.Now()
+			existing.HitCount++
+			n.mu.Unlock()
+			if onData != nil {
+				onData(existing.Data, true)
+			}
+			return existing, nil
+		}
+		entry := &NDFEntry{
+			URL:          url,
+			ETag:         resp.Header.Get("ETag"),
+			LastModified: resp.Header.Get("Last-Modified"),
+			Hash:         hash,
+			Data:         data,
+			Size:         int64(len(data)),
+			Accesses:     1,
+			LastAccess:   time.Now(),
+			Created:      time.Now(),
+			HitCount:     0,
+		}
+		if n.hlrc != nil {
+			n.hlrc.Register(url, HLRCKindCache, uint32(len(data)/1024))
+			n.hlrc.UpdateCosts(url, 0.7, 0.5, int64(len(data)), 10, 0, int64(len(data)))
+			n.hlrc.Access(url)
+		}
+		if exists {
+			n.currSize -= existing.Size
+		}
+		n.entries[url] = entry
+		n.currSize += entry.Size
+		n.evictIfNeeded()
+		n.mu.Unlock()
+
+		if onData != nil {
+			onData(entry.Data, false)
+		}
+		return entry, nil
+	}
+
+	return nil, fmt.Errorf("HTTP %d", resp.StatusCode)
+}
+
+func (n *NDFCache) evictIfNeeded() {
+	if n.currSize <= n.maxSize {
+		return
+	}
+
+	// Sort by access time, evict coldest
+	type kv struct {
+		k string
+		v *NDFEntry
+	}
+	var entries []kv
+	for k, v := range n.entries {
+		entries = append(entries, kv{k, v})
+	}
+
+	// Evict 20% of entries
+	toEvict := len(entries) / 5
+	if toEvict < 1 {
+		toEvict = 1
+	}
+
+	sort.Slice(entries, func(i, j int) bool {
+		return entries[i].v.LastAccess.Before(entries[j].v.LastAccess)
+	})
+	for i := 0; i < toEvict && i < len(entries); i++ {
+		n.currSize -= entries[i].v.Size
+		delete(n.entries, entries[i].k)
+	}
+}
+
+func (n *NDFCache) Stats() map[string]interface{} {
+	n.mu.RLock()
+	defer n.mu.RUnlock()
+	
+	totalHits := int64(0)
+	totalAccesses := uint64(0)
+	for _, e := range n.entries {
+		totalHits += e.HitCount
+		totalAccesses += e.Accesses
+	}
+
+	return map[string]interface{}{
+		"cached":        len(n.entries),
+		"size_mb":       n.currSize / (1024 * 1024),
+		"max_mb":        n.maxSize / (1024 * 1024),
+		"total_accesses": totalAccesses,
+		"cache_hits":    totalHits,
+		"hit_rate":      fmt.Sprintf("%.1f%%", float64(totalHits)*100/float64(totalAccesses+1)),
+	}
+}
+
+func (n *NDFCache) Clear() {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	n.entries = make(map[string]*NDFEntry)
+	n.currSize = 0
+}
+//-- autotune.go --
+package main
+
+import (
+	"fmt"
+	"math"
+	"sync"
+	"time"
+)
+
+// AutoTuneUHE - automatically adjust UHE thresholds based on site patterns
+type AutoTuneUHE struct {
+	mu              sync.RWMutex
+	enabled         bool
+	profilesByDomain map[string]*SiteProfile
+	globalProfile   *SiteProfile
+	stopCh          chan struct{}
+	optRef          *Optimizer
+}
+
+type SiteProfile struct {
+	Domain        string
+	CPUUsage      float64
+	MemUsage      float64
+	NetworkUsage  float64
+	AccessRate    float64
+	DecayRate     float64
+	HotThresh     float64
+	WarmThresh    float64
+	CoolThresh    float64
+	Samples       int
+	LastUpdate    time.Time
+	Recommendations string
+}
+
+func NewAutoTuneUHE() *AutoTuneUHE {
+	return &AutoTuneUHE{
+		enabled:         true,
+		profilesByDomain: make(map[string]*SiteProfile),
+		globalProfile:   &SiteProfile{Domain: "global"},
+	}
+}
+
+func (a *AutoTuneUHE) Start() {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if !a.enabled || a.stopCh != nil {
+		return
+	}
+	a.stopCh = make(chan struct{})
+	go a.tuneLoop()
+}
+
+func (a *AutoTuneUHE) Stop() {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.stopCh != nil {
+		close(a.stopCh)
+		a.stopCh = nil
+	}
+}
+
+func (a *AutoTuneUHE) tuneLoop() {
+	ticker := time.NewTicker(30 * time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ticker.C:
+			if a.optRef != nil && !a.optRef.ShouldRun("autotune") {
+				continue
+			}
+			a.analyze()
+		case <-a.stopCh:
+			return
+		}
+	}
+}
+
+func (a *AutoTuneUHE) SetOptRef(o *Optimizer) { a.optRef = o }
+
+func (a *AutoTuneUHE) RecordMetrics(domain string, cpu, mem, net float64) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+
+	if _, ok := a.profilesByDomain[domain]; !ok {
+		a.profilesByDomain[domain] = &SiteProfile{
+			Domain:     domain,
+			HotThresh:  0.6,
+			WarmThresh: 0.25,
+			CoolThresh: 0.1,
+			DecayRate:  0.02,
+		}
+	}
+
+	p := a.profilesByDomain[domain]
+	p.CPUUsage = (p.CPUUsage*float64(p.Samples) + cpu) / float64(p.Samples+1)
+	p.MemUsage = (p.MemUsage*float64(p.Samples) + mem) / float64(p.Samples+1)
+	p.NetworkUsage = (p.NetworkUsage*float64(p.Samples) + net) / float64(p.Samples+1)
+	p.Samples++
+	p.LastUpdate = time.Now()
+}
+
+func (a *AutoTuneUHE) analyze() {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+
+	// Evict profiles not seen in 1 hour
+	cutoff := time.Now().Add(-1 * time.Hour)
+	for domain, p := range a.profilesByDomain {
+		if p.LastUpdate.Before(cutoff) {
+			delete(a.profilesByDomain, domain)
+		}
+	}
+
+	// Cap at 200 domains
+	const maxProfiles = 200
+	if len(a.profilesByDomain) > maxProfiles {
+		var oldest string
+		var oldestTime time.Time
+		first := true
+		for d, p := range a.profilesByDomain {
+			if first || p.LastUpdate.Before(oldestTime) {
+				oldest = d
+				oldestTime = p.LastUpdate
+				first = false
+			}
+		}
+		delete(a.profilesByDomain, oldest)
+	}
+
+	// Analyze each domain profile
+	for domain, p := range a.profilesByDomain {
+		if p.Samples < 5 {
+			continue
+		}
+
+		old := p.DecayRate
+		a.tuneProfile(p)
+		if old != p.DecayRate {
+			fmt.Printf("[AutoTune] %s: decay %.3f â†’ %.3f (cpu:%.1f%% mem:%.1f%% net:%.1f%%)\n",
+				domain, old, p.DecayRate, p.CPUUsage, p.MemUsage, p.NetworkUsage)
+		}
+	}
+
+	// Update global profile
+	if len(a.profilesByDomain) > 0 {
+		a.tuneProfile(a.globalProfile)
+	}
+}
+
+func (a *AutoTuneUHE) tuneProfile(p *SiteProfile) {
+	// Normalize metrics to 0-1
+	cpu := math.Min(p.CPUUsage/100, 1.0)
+	mem := math.Min(p.MemUsage/100, 1.0)
+	net := math.Min(p.NetworkUsage/100, 1.0)
+
+	// Adjust decay rate based on resource usage
+	// High CPU/Mem â†’ reduce decay (keep hot items longer)
+	// Low CPU/Mem â†’ increase decay (clean up faster)
+	avgUsage := (cpu + mem) / 2
+	baseDecay := 0.02
+	if avgUsage > 0.7 {
+		// Heavy site: aggressive heat retention
+		p.DecayRate = baseDecay * 0.5
+		p.HotThresh = 0.5
+		p.WarmThresh = 0.2
+		p.CoolThresh = 0.05
+		p.Recommendations = "Heavy site: aggressive retention"
+	} else if avgUsage > 0.4 {
+		// Medium site: balanced
+		p.DecayRate = baseDecay
+		p.HotThresh = 0.6
+		p.WarmThresh = 0.25
+		p.CoolThresh = 0.1
+		p.Recommendations = "Medium site: balanced"
+	} else {
+		// Light site: aggressive cleanup
+		p.DecayRate = baseDecay * 2
+		p.HotThresh = 0.7
+		p.WarmThresh = 0.35
+		p.CoolThresh = 0.15
+		p.Recommendations = "Light site: aggressive cleanup"
+	}
+
+	// Adjust for network usage
+	if net > 0.3 {
+		p.DecayRate *= 0.75 // Slow down decay on heavy network
+	}
+
+	// Adjust for memory pressure
+	if mem > 0.8 {
+		p.DecayRate *= 1.5 // Speed up decay under mem pressure
+	}
+}
+
+func (a *AutoTuneUHE) GetProfile(domain string) *SiteProfile {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+
+	if p, ok := a.profilesByDomain[domain]; ok {
+		return p
+	}
+	return nil
+}
+
+func (a *AutoTuneUHE) GetGlobalProfile() *SiteProfile {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	return a.globalProfile
+}
+
+func (a *AutoTuneUHE) AllProfiles() map[string]*SiteProfile {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	
+	m := make(map[string]*SiteProfile)
+	for k, v := range a.profilesByDomain {
+		m[k] = v
+	}
+	return m
+}
+
+func (a *AutoTuneUHE) Recommend(domain string) string {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+
+	if p, ok := a.profilesByDomain[domain]; ok {
+		return p.Recommendations
+	}
+	return "collecting metrics..."
+}
+
+func (a *AutoTuneUHE) String() string {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	return fmt.Sprintf("AutoTuneUHE: %d domains profiled, global decay=%.3f", 
+		len(a.profilesByDomain), a.globalProfile.DecayRate)
+}
+//-- gc_controller.go --
+package main
+
+import (
+	"fmt"
+	"runtime"
+	"runtime/debug"
+	"sync"
+	"time"
+)
+
+// AdaptiveGCController - dynamically adjust GC pressure based on runtime heap pressure
+type AdaptiveGCController struct {
+	mu                 sync.RWMutex
+	enabled            bool
+	stopCh             chan struct{}
+	
+	// EWMA state
+	smoothedHeap       uint64
+	prevSmoothedHeap   uint64
+	alpha              float64  // EWMA smoothing factor (0.2)
+	
+	// Current state
+	currentGCPercent   int
+	lastSetTime        time.Time
+	
+	// Thresholds
+	aggressiveThresh   float64  // >15% growth â†’ GC aggressively
+	relaxThresh        float64  // <2% growth â†’ relax GC
+	minGCPercent       int      // floor: 20
+	maxGCPercent       int      // ceil: 150
+	
+	// System memory
+	memoryLimitBytes   int64
+	dynamicMemLimit    bool
+	
+	// Stats
+	samples            int
+	lastGCPercent      int
+	heapGrowthRate     float64
+}
+
+func NewAdaptiveGCController() *AdaptiveGCController {
+	return &AdaptiveGCController{
+		enabled:          true,
+		alpha:            0.2,
+		aggressiveThresh: 0.15,
+		relaxThresh:      0.02,
+		minGCPercent:     20,
+		maxGCPercent:     150,
+		currentGCPercent: 100,
+		dynamicMemLimit:  true,
+	}
+}
+
+func (agc *AdaptiveGCController) Start() {
+	agc.mu.Lock()
+	defer agc.mu.Unlock()
+	if !agc.enabled || agc.stopCh != nil {
+		return
+	}
+	
+	// Initialize system memory limit
+	agc.setDynamicMemoryLimit()
+	
+	agc.stopCh = make(chan struct{})
+	go agc.monitorLoop()
+}
+
+func (agc *AdaptiveGCController) Stop() {
+	agc.mu.Lock()
+	defer agc.mu.Unlock()
+	if agc.stopCh != nil {
+		close(agc.stopCh)
+		agc.stopCh = nil
+	}
+}
+
+func (agc *AdaptiveGCController) monitorLoop() {
+	ticker := time.NewTicker(10 * time.Second)
+	defer ticker.Stop()
+	
+	for {
+		select {
+		case <-ticker.C:
+			agc.evaluate()
+		case <-agc.stopCh:
+			return
+		}
+	}
+}
+
+func (agc *AdaptiveGCController) evaluate() {
+	var m runtime.MemStats
+	runtime.ReadMemStats(&m)
+	
+	agc.mu.Lock()
+	defer agc.mu.Unlock()
+	
+	// Calculate EWMA of heap
+	currentHeap := m.Alloc
+	if agc.smoothedHeap == 0 {
+		agc.smoothedHeap = currentHeap
+	} else {
+		agc.smoothedHeap = uint64(float64(agc.alpha)*float64(currentHeap) + 
+			float64(1-agc.alpha)*float64(agc.smoothedHeap))
+	}
+	
+	// Calculate growth rate
+	var growthRate float64
+	if agc.prevSmoothedHeap > 0 {
+		growthRate = float64(int64(agc.smoothedHeap)-int64(agc.prevSmoothedHeap)) / 
+			float64(agc.prevSmoothedHeap)
+	}
+	agc.heapGrowthRate = growthRate
+	agc.prevSmoothedHeap = agc.smoothedHeap
+	agc.samples++
+	
+	// Determine new GCPercent
+	var newGCPercent int
+	if growthRate > agc.aggressiveThresh {
+		// Heap growing >15% â†’ aggressive GC
+		newGCPercent = agc.minGCPercent
+	} else if growthRate < agc.relaxThresh {
+		// Heap stable (<2%) â†’ relax GC to reduce CPU
+		newGCPercent = agc.maxGCPercent
+	} else {
+		// Linear interpolation between relax and aggressive
+		// growthRate âˆˆ [0.02, 0.15] â†’ GCPercent âˆˆ [150, 20]
+		ratio := (growthRate - agc.relaxThresh) / (agc.aggressiveThresh - agc.relaxThresh)
+		newGCPercent = agc.maxGCPercent - int(ratio*float64(agc.maxGCPercent-agc.minGCPercent))
+	}
+	
+	// Apply adjustment if changed
+	if newGCPercent != agc.currentGCPercent {
+		debug.SetGCPercent(newGCPercent)
+		agc.currentGCPercent = newGCPercent
+		agc.lastGCPercent = newGCPercent
+		agc.lastSetTime = time.Now()
+		
+		if agc.samples%15 == 0 {
+			fmt.Printf("[AdaptiveGC] heap=%dMB growth=%.2f%% GCPercent=%d\n",
+				agc.smoothedHeap/(1024*1024), growthRate*100, newGCPercent)
+		}
+	}
+	
+	// Update memory limit if enabled
+	if agc.dynamicMemLimit && agc.samples%6 == 0 {
+		agc.setDynamicMemoryLimit()
+	}
+}
+
+func (agc *AdaptiveGCController) setDynamicMemoryLimit() {
+	var m runtime.MemStats
+	runtime.ReadMemStats(&m)
+	
+	// Dynamic limit = 40% of system memory obtained from OS, not less than 96MB
+	proposed := int64(m.Sys) / 100 * 40
+	if proposed < 96*1024*1024 {
+		proposed = 96 * 1024 * 1024
+	}
+	
+	// Cap at 512MB to avoid runaway growth
+	if proposed > 512*1024*1024 {
+		proposed = 512 * 1024 * 1024
+	}
+	
+	debug.SetMemoryLimit(proposed)
+	agc.memoryLimitBytes = proposed
+}
+
+func (agc *AdaptiveGCController) Stats() map[string]interface{} {
+	agc.mu.RLock()
+	defer agc.mu.RUnlock()
+	
+	var m runtime.MemStats
+	runtime.ReadMemStats(&m)
+	
+	return map[string]interface{}{
+		"heap_mb":           m.Alloc / (1024 * 1024),
+		"smoothed_heap_mb":  agc.smoothedHeap / (1024 * 1024),
+		"growth_rate":       fmt.Sprintf("%.2f%%", agc.heapGrowthRate*100),
+		"gc_percent":        agc.currentGCPercent,
+		"memory_limit_mb":   agc.memoryLimitBytes / (1024 * 1024),
+		"gc_runs":           m.NumGC,
+		"pause_ms":          fmt.Sprintf("%.2f", float64(m.PauseNs[(m.NumGC+255)%256])/1e6),
+		"samples":           agc.samples,
+	}
+}
+
+func (agc *AdaptiveGCController) String() string {
+	agc.mu.RLock()
+	defer agc.mu.RUnlock()
+	return fmt.Sprintf("AdaptiveGC: heap=%.0fMB growth=%.1f%% GCPercent=%d samples=%d",
+		float64(agc.smoothedHeap)/(1024*1024), agc.heapGrowthRate*100, agc.currentGCPercent, agc.samples)
+}
+//-- quick_opt.go --
+package main
+
+import (
+	"net/http"
+	"sync"
+	"time"
+)
+
+// =============================================================================
+// QuickOpt â€” 5 low-overhead optimisation engines combined
+// =============================================================================
+
+type QuickOptEngine struct {
+	b       *browser
+	mu      sync.Mutex
+	enabled bool
+
+	mddpEnabled bool
+	htpEnabled  bool
+	psfqEnabled bool
+	daeEnabled  bool
+	fdtfEnabled bool
+
+	mddp *MDDPState
+	htp  *HTPState
+	psfq *PSFQState
+	dae  *DAEState
+	fdtf *FDTFState
+}
+
+type MDDPState struct {
+	DNSHits     int            `json:"dnsHits"`
+	TCPHits     int            `json:"tcpHits"`
+	CacheHits   int            `json:"cacheHits"`
+	dnsCache    map[string]int64
+}
+
+type HTPState struct {
+	Preconnects int `json:"preconnects"`
+	Hovers      int `json:"hovers"`
+	Cancels     int `json:"cancels"`
+}
+
+type PSFQState struct {
+	Critical int `json:"critical"`
+	High     int `json:"high"`
+	Low      int `json:"low"`
+	Total    int `json:"total"`
+}
+
+type DAEState struct {
+	Decoded   int `json:"decoded"`
+	Evicted   int `json:"evicted"`
+	Restored  int `json:"restored"`
+	ActiveObs int `json:"activeObs"`
+}
+
+type FDTFState struct {
+	FontsLoaded int `json:"fontsLoaded"`
+	Fallbacks   int `json:"fallbacks"`
+	Swapped     int `json:"swapped"`
+	Locked      int `json:"locked"`
+}
+
+type QuickOptStats struct {
+	MDDP *MDDPState `json:"mddp"`
+	HTP  *HTPState  `json:"htp"`
+	PSFQ *PSFQState `json:"psfq"`
+	DAE  *DAEState  `json:"dae"`
+	FDTF *FDTFState `json:"fdtf"`
+}
+
+func NewQuickOptEngine(b *browser) *QuickOptEngine {
+	return &QuickOptEngine{
+		b:       b,
+		enabled: true,
+		mddp:    &MDDPState{dnsCache: make(map[string]int64)},
+		htp:     &HTPState{},
+		psfq:    &PSFQState{},
+		dae:     &DAEState{},
+		fdtf:    &FDTFState{},
+	}
+}
+
+// =============================================================================
+// MDDP â€” Mouse-Down DNS Prefetch + Adaptive DNS/TCP
+// =============================================================================
+
+const mddpJS = `(function(){
+if(window.__mbMDDP)return;
+window.__mbMDDP={cache:{},ttl:300000};
+document.addEventListener('mousedown',function(e){
+var el=e.target.closest('a,area');
+if(!el)return;
+try{
+var url=new URL(el.href);
+var o=url.origin;
+if(!o||o===location.origin)return;
+var now=Date.now();
+if(window.__mbMDDP.cache[o]&&(now-window.__mbMDDP.cache[o])<window.__mbMDDP.ttl)return;
+window.__mbMDDP.cache[o]=now;
+var rtt=navigator.connection?navigator.connection.rtt:-1;
+var dns=document.createElement('link');
+dns.rel='dns-prefetch';dns.href=o;
+document.head.appendChild(dns);
+if(rtt<0||rtt>150){
+var pc=document.createElement('link');
+pc.rel='preconnect';pc.href=o;pc.setAttribute('data-mddp','1');
+document.head.appendChild(pc);
+window.__mbMDDP._tcp=(window.__mbMDDP._tcp||0)+1;}
+window.__mbMDDP._hits=(window.__mbMDDP._hits||0)+1;
+}catch(ex){}},
+true);})()`
+
+// =============================================================================
+// HTP â€” Hover-Triggered Preconnect (50ms intent)
+// =============================================================================
+
+const htpJS = `(function(){
+if(window.__mbHTP)return;
+window.__mbHTP={timers:{},hovers:0,cancels:0,connects:0};
+document.addEventListener('mouseover',function(e){
+var el=e.target.closest('a');
+if(!el)return;
+try{
+var url=new URL(el.href);
+var o=url.origin;
+if(!o||o===location.origin)return;
+if(window.__mbHTP.timers[o])return;
+window.__mbHTP.hovers++;
+window.__mbHTP.timers[o]=setTimeout(function(){
+delete window.__mbHTP.timers[o];
+var pc=document.createElement('link');
+pc.rel='preconnect';pc.href=o;pc.setAttribute('data-htp','1');
+document.head.appendChild(pc);
+window.__mbHTP.connects++;
+},50);
+}catch(ex){}},
+true);
+document.addEventListener('mouseout',function(e){
+var el=e.target.closest('a');
+if(!el)return;
+try{
+var url=new URL(el.href);
+var o=url.origin;
+if(window.__mbHTP.timers[o]){clearTimeout(window.__mbHTP.timers[o]);delete window.__mbHTP.timers[o];window.__mbHTP.cancels++;}
+}catch(ex){}},
+true);})()`
+
+// =============================================================================
+// PSFQ â€” Priority-Static Fetch Queue (Critical > High > Low)
+// =============================================================================
+
+const psfqJS = `(function(){
+if(window.__mbPSFQ)return;
+window.__mbPSFQ={critical:[],high:[],low:[],c:0,h:0,l:0,total:0};
+var _fetch=window.fetch;
+window.fetch=function(u,o){
+var prio=(o&&o.priority)||'auto';
+var url=typeof u==='string'?u:u.url||'';
+var cls='low';
+if(url.match(/\.(css|html?)$/i)||prio==='critical')cls='critical';
+else if(!url.match(/\.(png|jpg|webp|gif|svg|avif|woff2?|mp4|fetch|api)/i)||prio==='high')cls='high';
+window.__mbPSFQ.total++;
+window.__mbPSFQ[cls]=(window.__mbPSFQ[cls]||0)+1;
+if(cls==='low'){
+return new Promise(function(r){
+setTimeout(function(){r(_fetch(u,o));},10);});}
+return _fetch(u,o);
+};
+var _XHR=XMLHttpRequest.prototype.open;
+XMLHttpRequest.prototype.open=function(m,u,a){
+this.__mbUrl=u;
+return _XHR.apply(this,arguments);
+};})()`
+
+// =============================================================================
+// DAE â€” Decode-on-Approach with Eviction (IntersectionObserver)
+// =============================================================================
+
+const daeJS = `(function(){
+if(window.__mbDAE)return;
+window.__mbDAE={decoded:0,evicted:0,restored:0,obs:null};
+var isSup=window.IntersectionObserver?true:false;
+if(!isSup)return;
+var obs=new IntersectionObserver(function(es){
+es.forEach(function(e){
+var img=e.target;
+if(e.isIntersecting){
+var src=img.getAttribute('data-src');
+if(src){img.src=src;img.removeAttribute('data-src');window.__mbDAE.restored++;}
+if(img.tagName==='IMG'&&!img.complete){img.decode().then(function(){window.__mbDAE.decoded++;})["catch"](function(){});}
+}else{
+if(img.tagName!=='IMG')return;
+var rect=img.getBoundingClientRect();
+if(rect.bottom< -1000||rect.top>window.innerHeight+1000){
+if(img.src&&!img.src.startsWith('data:')&&!img.complete){
+var tid=setTimeout(function(){
+if(!img.complete){
+img.setAttribute('data-src',img.src);
+img.removeAttribute('srcset');img.src='';
+window.__mbDAE.evicted++;}
+},1000);
+img.__mbEvt=tid;
+if(img.__mbEvtTO)clearTimeout(img.__mbEvtTO);
+img.__mbEvtTO=tid;}}});
+},{rootMargin:'500px'});
+window.__mbDAE.obs=obs;
+var imgs=document.querySelectorAll('img');
+imgs.forEach(function(i){obs.observe(i);});
+var mo=new MutationObserver(function(muts){
+muts.forEach(function(m){
+m.addedNodes.forEach(function(n){
+if(n.nodeType===1&&n.tagName==='IMG')window.__mbDAE.obs.observe(n);
+if(n.nodeType===1)n.querySelectorAll('img').forEach(function(i){window.__mbDAE.obs.observe(i);});});});});
+mo.observe(document.body,{childList:true,subtree:true});
+window.__mbDAE._mo=mo;
+})()`
+
+// =============================================================================
+// FDTF â€” Font Display Timeout Fallback (soft: 1s fallback, 3s lock)
+// =============================================================================
+
+const fdtfJS = `(function(){
+if(window.__mbFDTF)return;
+window.__mbFDTF={loaded:0,fallbacks:0,swapped:0,locked:0,timers:{}};
+document.fonts.ready.then(function(){
+window.__mbFDTF.loaded=document.fonts.size;});
+var els=document.createElement('style');
+els.textContent='@font-face{font-family:"__mbFDTF_fb";src:local("Arial");size-adjust:100%}';
+document.head.appendChild(els);
+var obs=new MutationObserver(function(muts){
+muts.forEach(function(m){
+if(m.type==='childList'){m.addedNodes.forEach(function(n){
+if(n.nodeType===1&&n.tagName==='LINK'&&n.rel==='stylesheet'&&n.href&&n.href.match(/font|googleapis|fontawesome|typekit/i)){
+var t1=setTimeout(function(){n.disabled=true;
+var st=document.createElement('style');
+st.textContent='*{font-family:"__mbFDTF_fb",serif!important}';
+st.id='__mbFDTF_fb';
+document.head.appendChild(st);
+window.__mbFDTF.fallbacks++;
+var t3=setTimeout(function(){
+var fb=document.getElementById('__mbFDTF_fb');
+if(fb)fb.remove();
+n.disabled=false;
+window.__mbFDTF.locked++;
+},3000);
+window.__mbFDTF.timers[n.href]=t3;},1000);
+window.__mbFDTF.timers[n.href]=t1;
+n.addEventListener('load',function(){
+if(window.__mbFDTF.timers[n.href]){clearTimeout(window.__mbFDTF.timers[n.href]);delete window.__mbFDTF.timers[n.href];}
+window.__mbFDTF.loaded++;
+var fb=document.getElementById('__mbFDTF_fb');
+if(fb){setTimeout(function(){if(fb.parentNode)fb.parentNode.removeChild(fb);},200);
+window.__mbFDTF.swapped++;}});}});}});});
+obs.observe(document.head,{childList:true,subtree:true});
+})()`
+
+// =============================================================================
+// Engine methods
+// =============================================================================
+
+func (q *QuickOptEngine) InjectAll() {
+	if !q.enabled {
+		return
+	}
+	q.mu.Lock()
+	defer q.mu.Unlock()
+
+	q.b.syncExec(mddpJS + htpJS + psfqJS + daeJS + fdtfJS)
+
+	q.mddpEnabled = true
+	q.htpEnabled = true
+	q.psfqEnabled = true
+	q.daeEnabled = true
+	q.fdtfEnabled = true
+}
+
+func (q *QuickOptEngine) GatherStats() *QuickOptStats {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+
+	var all struct {
+		MDDP struct {
+			DNSHits   int `json:"dnsHits"`
+			TCPHits   int `json:"tcpHits"`
+			CacheSize int `json:"cacheSize"`
+		} `json:"mddp"`
+		HTP struct {
+			Preconnects int `json:"preconnects"`
+			Hovers  int `json:"hovers"`
+		} `json:"htp"`
+		PSFQ struct {
+			Critical int `json:"critical"`
+			Total    int `json:"total"`
+		} `json:"psfq"`
+		DAE struct {
+			Decoded int `json:"decoded"`
+			Evicted int `json:"evicted"`
+		} `json:"dae"`
+		FDTF struct {
+			Swapped     int `json:"swapped"`
+			FontsLoaded int `json:"fontsLoaded"`
+		} `json:"fdtf"`
+	}
+	combinedJS := `(function(){
+		var r={};
+		var m=window.__mbMDDP||{};r.mddp={dnsHits:m._hits||0,tcpHits:m._tcp||0,cacheSize:Object.keys(m.cache||{}).length};
+		var h=window.__mbHTP||{};r.htp={preconnects:h._count||0,hovers:h._ok||0};
+		var p=window.__mbPSFQ||{};r.psfq={critical:p._queued||0,total:p._done||0};
+		var d=window.__mbDAE||{};r.dae={decoded:d._decoded||0,evicted:d._evicted||0};
+		var f=window.__mbFDTF||{};r.fdtf={swapped:f._swap||0,fontsLoaded:f._ready||0};
+		return r;
+	})()`
+	if err := q.b.syncUnwrapInto(combinedJS, 5*time.Second, &all); err == nil {
+		q.mddp.DNSHits = all.MDDP.DNSHits
+		q.mddp.TCPHits = all.MDDP.TCPHits
+		q.mddp.CacheHits = all.MDDP.CacheSize
+		q.htp.Preconnects = all.HTP.Preconnects
+		q.htp.Hovers = all.HTP.Hovers
+		q.psfq.Critical = all.PSFQ.Critical
+		q.psfq.Total = all.PSFQ.Total
+		q.dae.Decoded = all.DAE.Decoded
+		q.dae.Evicted = all.DAE.Evicted
+		q.fdtf.Swapped = all.FDTF.Swapped
+		q.fdtf.FontsLoaded = all.FDTF.FontsLoaded
+	}
+
+	return &QuickOptStats{
+		MDDP: q.mddp,
+		HTP:  q.htp,
+		PSFQ: q.psfq,
+		DAE:  q.dae,
+		FDTF: q.fdtf,
+	}
+}
+
+func (q *QuickOptEngine) gatherMDDP() *MDDPState {
+	var s struct {
+		Hits  int `json:"hits"`
+		TCP   int `json:"tcp"`
+		Cache int `json:"cache"`
+	}
+	if err := q.b.syncUnwrapInto(`(function(){
+var s=window.__mbMDDP||{};
+return{hits:s._hits||0,tcp:s._tcp||0,cache:Object.keys(s.cache||{}).length};
+})()`, 5*time.Second, &s); err != nil {
+		return q.mddp
+	}
+	q.mddp.DNSHits = s.Hits
+	q.mddp.TCPHits = s.TCP
+	q.mddp.CacheHits = s.Cache
+	return q.mddp
+}
+
+func (q *QuickOptEngine) gatherHTP() *HTPState {
+	var s struct {
+		Hovers    int `json:"hovers"`
+		Cancels   int `json:"cancels"`
+		Connects  int `json:"connects"`
+	}
+	if err := q.b.syncUnwrapInto(`(function(){
+var s=window.__mbHTP||{};
+return{hovers:s.hovers||0,cancels:s.cancels||0,connects:s.connects||0};
+})()`, 5*time.Second, &s); err != nil {
+		return q.htp
+	}
+	q.htp.Hovers = s.Hovers
+	q.htp.Cancels = s.Cancels
+	q.htp.Preconnects = s.Connects
+	return q.htp
+}
+
+func (q *QuickOptEngine) gatherPSFQ() *PSFQState {
+	var s struct {
+		Critical int `json:"critical"`
+		High     int `json:"high"`
+		Low      int `json:"low"`
+		Total    int `json:"total"`
+	}
+	if err := q.b.syncUnwrapInto(`(function(){
+var s=window.__mbPSFQ||{};
+return{critical:s.critical||0,high:s.high||0,low:s.low||0,total:s.total||0};
+})()`, 5*time.Second, &s); err != nil {
+		return q.psfq
+	}
+	q.psfq.Critical = s.Critical
+	q.psfq.High = s.High
+	q.psfq.Low = s.Low
+	q.psfq.Total = s.Total
+	return q.psfq
+}
+
+func (q *QuickOptEngine) gatherDAE() *DAEState {
+	var s struct {
+		Decoded  int `json:"decoded"`
+		Evicted  int `json:"evicted"`
+		Restored int `json:"restored"`
+		Obs      int `json:"obs"`
+	}
+	if err := q.b.syncUnwrapInto(`(function(){
+var s=window.__mbDAE||{};
+return{decoded:s.decoded||0,evicted:s.evicted||0,restored:s.restored||0,obs:s.obs?1:0};
+})()`, 5*time.Second, &s); err != nil {
+		return q.dae
+	}
+	q.dae.Decoded = s.Decoded
+	q.dae.Evicted = s.Evicted
+	q.dae.Restored = s.Restored
+	q.dae.ActiveObs = s.Obs
+	return q.dae
+}
+
+func (q *QuickOptEngine) gatherFDTF() *FDTFState {
+	var s struct {
+		Loaded    int `json:"loaded"`
+		Fallbacks int `json:"fallbacks"`
+		Swapped   int `json:"swapped"`
+		Locked    int `json:"locked"`
+	}
+	if err := q.b.syncUnwrapInto(`(function(){
+var s=window.__mbFDTF||{};
+return{loaded:s.loaded||0,fallbacks:s.fallbacks||0,swapped:s.swapped||0,locked:s.locked||0};
+})()`, 5*time.Second, &s); err != nil {
+		return q.fdtf
+	}
+	q.fdtf.FontsLoaded = s.Loaded
+	q.fdtf.Fallbacks = s.Fallbacks
+	q.fdtf.Swapped = s.Swapped
+	q.fdtf.Locked = s.Locked
+	return q.fdtf
+}
+
+// =============================================================================
+// API handlers
+// =============================================================================
+
+func (b *browser) handleQuickOptInject(w http.ResponseWriter, r *http.Request) {
+	if b.opt == nil || b.opt.quick == nil {
+		writeError(w, 503, "QuickOpt not initialized")
+		return
+	}
+	b.opt.quick.InjectAll()
+	writeJSON(w, map[string]interface{}{"ok": true, "msg": "All 5 quick-opt engines injected"})
+}
+
+func (b *browser) handleQuickOptStats(w http.ResponseWriter, r *http.Request) {
+	if b.opt == nil || b.opt.quick == nil {
+		writeError(w, 503, "QuickOpt not initialized")
+		return
+	}
+	stats := b.opt.quick.GatherStats()
+	writeJSON(w, map[string]interface{}{"ok": true, "stats": stats})
+}
+//-- dom_opt.go --
+package main
+
+import (
+	"net/http"
+	"sync"
+	"time"
+)
+
+type RHDGCEngine struct {
+	b       *browser
+	mu      sync.Mutex
+	enabled bool
+	stats   RHDGCStats
+}
+
+type RHDGCStats struct {
+	Total     int     `json:"total"`
+	Detached  int     `json:"detached"`
+	Frozen    int     `json:"frozen"`
+	Destroyed int     `json:"destroyed"`
+	MemoryMB  float64 `json:"memoryMB"`
+	Status    string  `json:"status"`
+}
+
+var rhdgcJS = `(function(){
+if(window.__mbRHD)return;
+var R=window.__mbRHD={
+store:{},uid:0,total:0,detached:0,frozen:0,destroyed:0,
+init:function(){
+var T=this;
+var obs=new MutationObserver(function(muts){
+muts.forEach(function(m){
+if(m.type==='childList'){
+m.removedNodes.forEach(function(n){
+if(n.nodeType===1)T.track(n);});}});});
+obs.observe(document.documentElement,{childList:true,subtree:true});
+T._obs=obs;
+T._interval=setInterval(function(){T.scan();},5000);
+},
+track:function(n){
+var id='r'+(++this.uid);
+this.store[id]={
+node:n,heat:50,last:Date.now(),
+frozen:false,destroyed:false,tag:n.tagName||'',
+depth:this._depth(n),size:(n.offsetHeight||0)*(n.offsetWidth||0),
+children:n.querySelectorAll('*').length
+};
+n.__rhd=id;
+},
+_depth:function(n){var d=0;while(n){n=n.parentNode;d++;}return d;},
+scan:function(){
+var T=this,Ts=T.store;
+var now=Date.now();
+T.total=Object.keys(Ts).length;
+T.detached=0;T.frozen=0;T.destroyed=0;
+Object.keys(Ts).forEach(function(id){
+var e=Ts[id];
+if(e.destroyed){T.destroyed++;return;}
+if(!e.node||!e.node.parentNode){T.detached++;}else return;
+if(e.frozen){T.frozen++;}else{
+var sec=(now-e.last)/1000;
+e.heat=Math.max(0,e.heat-sec*5);
+if(e.heat<=0.1){T._freeze(id);}}
+var frozenSec=(now-e.last)/1000;
+if(e.frozen&&frozenSec>30){T._destroy(id);}
+});
+T._cleanup();
+},
+_freeze:function(id){
+var e=this.store[id];
+if(!e||!e.node)return;
+try{
+var n=e.node;
+var p=n.parentNode;
+if(p&&p.nodeType===1){
+var ph=document.createElement(n.tagName||'div');
+ph.style.cssText='display:none;width:'+(n.offsetWidth||0)+'px;height:'+(n.offsetHeight||0)+'px';
+ph.setAttribute('data-rhd-frozen','1');
+p.replaceChild(ph,n);
+e.node=ph;}
+e.heat=0;e.frozen=true;
+}catch(ex){}
+},
+_destroy:function(id){
+var e=this.store[id];
+if(!e)return;
+e.destroyed=true;
+if(e.node&&e.node.parentNode){
+try{e.node.parentNode.removeChild(e.node);}catch(ex){}
+e.node=null;
+delete this.store[id];
+}
+},
+_cleanup:function(){
+var T=this;
+Object.keys(T.store).forEach(function(id){
+var e=T.store[id];
+if(e.destroyed&&(!e.node))delete T.store[id];});
+},
+stats:function(){
+var T=this;
+var mem=performance.memory?Math.round(performance.memory.usedJSHeapSize/1048576*10)/10:0;
+return{total:T.total,detached:T.detached,frozen:T.frozen,destroyed:T.destroyed,memoryMB:mem,status:T.store?'active':'inactive'};
+}
+};
+R.init();
+})()`
+
+func NewRHDGCEngine(b *browser) *RHDGCEngine {
+	return &RHDGCEngine{b: b, enabled: true}
+}
+
+func (r *RHDGCEngine) Start() {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if !r.enabled {
+		return
+	}
+	r.b.syncExec(rhdgcJS)
+}
+
+var rhdGatherJS = "(function(){var s=window.__mbRHD;if(!s)return{total:0,detached:0,frozen:0,destroyed:0,memoryMB:0,status:'n/a'};return s.stats();})()"
+
+func (r *RHDGCEngine) Gather() *RHDGCStats {
+	var s RHDGCStats
+	if err := r.b.syncUnwrapInto(rhdGatherJS, 5*time.Second, &s); err != nil {
+		return &r.stats
+	}
+	r.mu.Lock()
+	r.stats = s
+	r.mu.Unlock()
+	return &s
+}
+
+// =============================================================================
+// PVC: Predictive Visibility Collapse
+// =============================================================================
+
+type PVCEngine struct {
+	b       *browser
+	mu      sync.Mutex
+	enabled bool
+	stats   PVCStats
+}
+
+type PVCStats struct {
+	Total     int     `json:"total"`
+	Full      int     `json:"full"`
+	Skeleton  int     `json:"skeleton"`
+	Collapsed int     `json:"collapsed"`
+	Expanded  int     `json:"expanded"`
+	MemoryMB  float64 `json:"memoryMB"`
+	Status    string  `json:"status"`
+}
+
+var pvcJS = `(function(){
+if(window.__mbPVC)return;
+var P=window.__mbPVC={
+store:{},uid:0,total:0,full:0,skeleton:0,collapsed:0,expanded:0,
+scrollY:0,scrollV:0,scrollDir:0,viewportH:0,
+init:function(){
+var T=this;
+T.viewportH=window.innerHeight;
+T.scrollY=window.scrollY;
+document.addEventListener('scroll',function(){
+var now=Date.now();
+var sy=window.scrollY;
+var dt=Math.max(16,now-(T._lastST||now));
+T.scrollV=(Math.abs(sy-T.scrollY))/dt*1000;
+T.scrollDir=sy>T.scrollY?1:-1;
+T.scrollY=sy;
+T._lastST=now;
+T._predict();},{passive:true});
+var obs=new IntersectionObserver(function(es){
+es.forEach(function(e){
+var el=e.target;
+var vid=e.intersectionRatio;
+var id=el.__pvc;
+if(id&&P.store[id]){
+var s=P.store[id];
+s.vis=vid;
+s.inVP=e.isIntersecting;
+s.rect=el.getBoundingClientRect();
+s.area=s.rect.width*s.rect.height||1;
+T._score(id);}});
+},{rootMargin:'200% 0px'});
+P._obs=obs;
+var all=document.querySelectorAll('section,article,main,aside,div[class],div[id]');
+all.forEach(function(el){T._register(el);});
+var mo=new MutationObserver(function(muts){
+muts.forEach(function(m){
+m.addedNodes.forEach(function(n){
+if(n.nodeType===1&&!n.__pvc){
+var tag=n.tagName.toLowerCase();
+if(tag==='section'||tag==='article'||tag==='main'||tag==='aside'||tag==='div')T._register(n);
+n.querySelectorAll('section,article,main,aside,div[class],div[id]').forEach(function(c){T._register(c);});}});});});
+mo.observe(document.body,{childList:true,subtree:true});
+P._mo=mo;
+setInterval(function(){T._scoreAll();},5000);
+},
+_register:function(el){
+if(el.__pvc)return;
+var id='p'+(++this.uid);
+el.__pvc=id;
+this._obs.observe(el);
+var rect=el.getBoundingClientRect();
+this.store[id]={
+el:el,tag:el.tagName||'div',
+rect:rect,area:rect.width*rect.height||1,
+vis:0,inVP:false,
+score:0,state:'FULL',expands:0,
+children:el.querySelectorAll('*').length,
+height:rect.height||0
+};
+},
+_score:function(id){
+var s=this.store[id];
+if(!s)return;
+var cy=this.viewportH/2;
+var ey=s.rect.top+s.rect.height/2;
+var distVP=Math.abs(ey-cy)/Math.max(this.viewportH,1);
+var centerScore=Math.max(0,1-distVP*1.5);
+var scrollBoost=0;
+if(this.scrollDir>0&&ey>cy)scrollBoost=0.1;
+if(this.scrollDir<0&&ey<cy)scrollBoost=0.1;
+var sizeScore=Math.min(1,s.area/(this.viewportH*400));
+s.score=Math.min(1,centerScore+scrollBoost+sizeScore*0.3+s.vis*0.3);
+if(!s.inVP)s.score*=0.3;
+this._apply(id);
+},
+_apply:function(id){
+var s=this.store[id];
+if(!s||!s.el)return;
+var old=s.state;
+if(s.score>0.3)s.state='FULL';
+else if(s.score>0.05)s.state='SKELETON';
+else s.state='COLLAPSED';
+if(old===s.state)return;
+var el=s.el;
+switch(s.state){
+case'FULL':
+el.style.visibility='';
+el.style.display='';
+el.removeAttribute('data-pvc-state');
+if(old==='COLLAPSED'||old==='SKELETON'){s.expands++;P.expanded++;}
+break;
+case'SKELETON':
+el.style.visibility='hidden';
+el.style.display='block';
+el.setAttribute('data-pvc-state','skeleton');
+break;
+case'COLLAPSED':
+el.style.display='none';
+el.setAttribute('data-pvc-state','collapsed');
+break;}
+},
+_scoreAll:function(){
+	var T=this;
+	T.total=0;T.full=0;T.skeleton=0;T.collapsed=0;
+	var orphans=[];
+	Object.keys(T.store).forEach(function(id){
+		var s=T.store[id];
+		if(!s||!s.el||!s.el.parentNode){orphans.push(id);return;}
+		T.total++;
+		T._score(id);
+		if(s.state==='FULL')T.full++;
+		else if(s.state==='SKELETON')T.skeleton++;
+		else T.collapsed++;
+	});
+	for(var i=0;i<orphans.length;i++)delete T.store[orphans[i]];
+},
+_predict:function(){
+var T=this;
+var vh=T.viewportH;
+var scrollDir=T.scrollDir;
+Object.keys(T.store).forEach(function(id){
+var s=T.store[id];
+if(!s||!s.el)return;
+if(s.state!=='COLLAPSED'&&s.state!=='SKELETON')return;
+var top=s.rect.top;
+if(scrollDir>0){
+if(top>0&&top<vh*1.5)T._expand(id);}
+else{
+if(top<vh&&top> -vh*0.5)T._expand(id);}
+});
+},
+_expand:function(id){
+var s=this.store[id];
+if(!s||!s.el)return;
+P.expanded++;
+var el=s.el;
+el.style.display='';
+el.style.visibility='visible';
+el.removeAttribute('data-pvc-state');
+s.state='FULL';
+this.full++;
+},
+stats:function(){
+var mem=performance.memory?Math.round(performance.memory.usedJSHeapSize/1048576*10)/10:0;
+return{total:P.total,full:P.full,skeleton:P.skeleton,collapsed:P.collapsed,expanded:P.expanded,memoryMB:mem,status:P.store?'active':'inactive'};
+}
+};
+P.init();
+})()`
+
+func NewPVCEngine(b *browser) *PVCEngine {
+	return &PVCEngine{b: b, enabled: true}
+}
+
+func (p *PVCEngine) Start() {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if !p.enabled {
+		return
+	}
+	p.b.syncExec(pvcJS)
+}
+
+var pvcGatherJS = "(function(){var s=window.__mbPVC;if(!s)return{total:0,full:0,skeleton:0,collapsed:0,expanded:0,memoryMB:0,status:'n/a'};return s.stats();})()"
+
+func (p *PVCEngine) Gather() *PVCStats {
+	var s PVCStats
+	if err := p.b.syncUnwrapInto(pvcGatherJS, 5*time.Second, &s); err != nil {
+		return &p.stats
+	}
+	p.mu.Lock()
+	p.stats = s
+	p.mu.Unlock()
+	return &s
+}
+
+// =============================================================================
+// API handlers
+// =============================================================================
+
+func (b *browser) handleRHDGCStart(w http.ResponseWriter, r *http.Request) {
+	if b.opt == nil || b.opt.rhd == nil {
+		writeError(w, 503, "RHD not init")
+		return
+	}
+	b.opt.rhd.Start()
+	writeJSON(w, map[string]interface{}{"ok": true, "msg": "RHD-GC started"})
+}
+
+func (b *browser) handleRHDGCStats(w http.ResponseWriter, r *http.Request) {
+	if b.opt == nil || b.opt.rhd == nil {
+		writeError(w, 503, "RHD not init")
+		return
+	}
+	s := b.opt.rhd.Gather()
+	writeJSON(w, map[string]interface{}{"ok": true, "stats": s})
+}
+
+func (b *browser) handlePVCStart(w http.ResponseWriter, r *http.Request) {
+	if b.opt == nil || b.opt.pvc == nil {
+		writeError(w, 503, "PVC not init")
+		return
+	}
+	b.opt.pvc.Start()
+	writeJSON(w, map[string]interface{}{"ok": true, "msg": "PVC started"})
+}
+
+func (b *browser) handlePVCStats(w http.ResponseWriter, r *http.Request) {
+	if b.opt == nil || b.opt.pvc == nil {
+		writeError(w, 503, "PVC not init")
+		return
+	}
+	s := b.opt.pvc.Gather()
+	writeJSON(w, map[string]interface{}{"ok": true, "stats": s})
+}
+//-- crg.go --
+package main
+
+import (
+	"fmt"
+	"net/http"
+	"sync"
+	"time"
+)
+
+type CRGNode struct {
+	UID         string `json:"uid"`
+	Tag         string `json:"tag"`
+	Depth       int    `json:"depth"`
+	NodeCount   int    `json:"nodeCount"`
+	Fingerprint string `json:"fingerprint"`
+	SubtreeSize int    `json:"subtreeSize"`
+	Stale       bool   `json:"stale"`
+	ReuseCount  int    `json:"reuseCount"`
+}
+
+type CRGStats struct {
+	ScanTime    string `json:"scanTime"`
+	TotalNodes  int    `json:"totalNodes"`
+	CacheHits   int    `json:"cacheHits"`
+	CacheMisses int    `json:"cacheMisses"`
+	StaleNodes  int    `json:"staleNodes"`
+	ReusedNodes int    `json:"reusedNodes"`
+	CacheSize   int    `json:"cacheSize"`
+	TotalSaved  string `json:"totalSaved"`
+}
+
+const crgScanJS = `(function(){
+var t0=performance.now();
+var nodes=[],uid=0;
+function fp(el,depth){
+var tag=(el.tagName||'').toLowerCase();
+if(tag==='script'||tag==='style'||tag==='meta'||tag==='link')return null;
+uid++;
+var children=[];
+for(var i=0;i<el.children.length;i++){
+var c=fp(el.children[i],depth+1);
+if(c)nodes.push(c);}
+var childCount=el.children.length;
+var attrs='';
+for(var i=0;i<el.attributes.length;i++){
+var a=el.attributes[i];
+if(a.name!=='data-crg-fp'&&a.name!=='data-vd'&&a.name!=='data-crg-stale')attrs+=a.name+'='+a.value+';';}
+var textLen=(el.innerText||'').trim().length;
+var h=tag+'|'+childCount+'|'+attrs.length+'|'+textLen+'|'+depth;
+var hash=0;for(var i=0;i<h.length;i++){hash=((hash<<5)-hash)+h.charCodeAt(i);hash|=0;}
+var fpStr=Math.abs(hash).toString(36).slice(0,8);
+el.setAttribute('data-crg-fp',fpStr);
+var stale=el.getAttribute('data-crg-stale')==='1';
+var prev=el.getAttribute('data-crg-rc');
+var rc=prev?parseInt(prev):0;
+return{uid:'c_'+uid,tag:tag,depth:depth,nodeCount:childCount,fingerprint:fpStr,subtreeSize:childCount+1,stale:stale,reuseCount:rc};
+}
+var root=fp(document.body,0);
+var mem=performance.memory?Math.round(performance.memory.usedJSHeapSize/1048576*10)/10:0;
+return{nodes:nodes,scanTime:Math.round(performance.now()-t0),memory:mem,total:nodes.length};
+})()`
+
+type crgCacheEntry struct {
+	Fingerprint string `json:"fingerprint"`
+	Tag         string `json:"tag"`
+	Stored      int64  `json:"stored"`
+}
+
+const crgObserverJS = `(function(){
+if(window.__crgObs)return;
+window.__crgObs=true;
+var obs=new MutationObserver(function(muts){
+var stale=new Set();
+muts.forEach(function(m){
+if(m.type==='childList'){m.addedNodes.forEach(function(n){if(n.nodeType===1)markStale(n);});
+m.removedNodes.forEach(function(n){if(n.nodeType===1)markStale(n);});}
+if(m.type==='attributes'&&m.target.nodeType===1){m.target.setAttribute('data-crg-stale','1');stale.add(m.target);}});
+if(stale.size>0){var ev=new CustomEvent('__crgStale',{detail:{count:stale.size}});window.dispatchEvent(ev);}});
+obs.observe(document.documentElement,{childList:true,subtree:true,attributes:true,attributeFilter:['class','style','src','href','id']});
+function markStale(el){
+el.setAttribute('data-crg-stale','1');
+for(var i=0;i<el.children.length;i++)markStale(el.children[i]);}
+})()`
+
+func crgCacheJS() string {
+	return `(function(threshold){
+var cache={};
+try{var saved=localStorage.getItem('__crg_cache');if(saved)cache=JSON.parse(saved);}catch(e){}
+var els=document.querySelectorAll('[data-crg-fp]');
+var count=0,saved=0;
+for(var i=0;i<els.length;i++){
+var el=els[i];
+var fp=el.getAttribute('data-crg-fp');
+if(!fp||fp==='')continue;
+if(!cache[fp]&&el.childElementCount>threshold){
+var subtree=el.outerHTML;
+if(subtree.length<50000){cache[fp]={html:subtree,time:Date.now(),tag:el.tagName};count++;}}
+var prev=el.getAttribute('data-crg-rc');
+el.setAttribute('data-crg-rc',prev?String(parseInt(prev)+1):'1');saved++;}
+try{var keys=Object.keys(cache);if(keys.length>500){var sorted=keys.sort(function(a,b){return cache[a].time-cache[b].time;});var del=sorted.slice(0,keys.length-500);del.forEach(function(k){delete cache[k];});}
+localStorage.setItem('__crg_cache',JSON.stringify(cache));}catch(e){}
+return{stored:count,reused:saved,cacheSize:Object.keys(cache).length};
+})` + fmt.Sprintf("(%d)", 3)
+}
+
+type CRGEngine struct {
+	b       *browser
+	mu      sync.Mutex
+	enabled bool
+	graph   []CRGNode
+	stats   CRGStats
+	crgCache map[string]crgCacheEntry
+	hitCount  int
+	missCount int
+}
+
+func NewCRGEngine(b *browser) *CRGEngine {
+	return &CRGEngine{
+		b:        b,
+		enabled:  true,
+		crgCache: make(map[string]crgCacheEntry),
+	}
+}
+
+func (c *CRGEngine) Scan() (*CRGStats, error) {
+	var raw struct {
+		Nodes   []CRGNode `json:"nodes"`
+		Time    int       `json:"scanTime"`
+		Memory  float64   `json:"memory"`
+		Total   int       `json:"total"`
+	}
+	if err := c.b.syncUnwrapInto(crgScanJS, 15*time.Second, &raw); err != nil {
+		return nil, fmt.Errorf("crg scan failed: %w", err)
+	}
+	c.mu.Lock()
+	c.graph = raw.Nodes
+	var staleCount, reuseCount int
+	for _, n := range raw.Nodes {
+		if n.Stale {
+			staleCount++
+		}
+		reuseCount += n.ReuseCount
+	}
+	totalSaved := "0"
+	if reuseCount > 0 {
+		savedMs := float64(reuseCount) * 15
+		if savedMs > 1000 {
+			totalSaved = fmt.Sprintf("%.1fs", savedMs/1000)
+		} else {
+			totalSaved = fmt.Sprintf("%.0fms", savedMs)
+		}
+	}
+	c.stats = CRGStats{
+		ScanTime:    fmt.Sprintf("%dms", raw.Time),
+		TotalNodes:  raw.Total,
+		CacheHits:   c.hitCount,
+		CacheMisses: c.missCount,
+		StaleNodes:  staleCount,
+		ReusedNodes: reuseCount,
+		CacheSize:   len(c.crgCache),
+		TotalSaved:  totalSaved,
+	}
+	c.mu.Unlock()
+	return &c.stats, nil
+}
+
+func (c *CRGEngine) Track() error {
+	c.b.syncExec(crgObserverJS)
+	return nil
+}
+
+func (c *CRGEngine) Cache() error {
+	var raw struct {
+		Stored    int `json:"stored"`
+		Reused    int `json:"reused"`
+		CacheSize int `json:"cacheSize"`
+	}
+	if err := c.b.syncUnwrapInto(crgCacheJS(), 10*time.Second, &raw); err != nil {
+		return err
+	}
+	c.mu.Lock()
+	c.hitCount += raw.Reused
+	c.missCount += raw.Stored
+	c.stats.CacheHits = c.hitCount
+	c.stats.CacheMisses = c.missCount
+	c.stats.CacheSize = raw.CacheSize
+	c.mu.Unlock()
+	return nil
+}
+
+func (c *CRGEngine) Reuse() error {
+	c.b.syncExec(`(function(){
+try{
+var saved=localStorage.getItem('__crg_cache');
+if(!saved)return;
+var cache=JSON.parse(saved);
+var fps=Object.keys(cache);
+var hits=0;
+for(var i=0;i<fps.length;i++){
+var els=document.querySelectorAll('[data-crg-fp="'+fps[i]+'"]');
+if(els.length>0){
+var cached=cache[fps[i]];
+if(cached&&cached.html&&els[0].childElementCount===0&&!els[0].hasAttribute('data-crg-stale')){
+hits++;}}}
+var ev=new CustomEvent('__crgReuse',{detail:{hits:hits}});
+window.dispatchEvent(ev);
+}catch(e){console.error('[CRG] reuse error',e);
+}})()`)
+	return nil
+}
+
+func (c *CRGEngine) Optimize() (*CRGStats, error) {
+	c.Track()
+	c.Cache()
+	stats, err := c.Scan()
+	if err != nil {
+		return nil, err
+	}
+	c.Reuse()
+	return stats, nil
+}
+
+func (b *browser) handleCRGSnapshot(w http.ResponseWriter, r *http.Request) {
+	if b.opt == nil || b.opt.crg == nil {
+		writeError(w, 503, "CRG engine not initialized")
+		return
+	}
+	stats, err := b.opt.crg.Scan()
+	if err != nil {
+		writeError(w, 500, "crg scan: "+err.Error())
+		return
+	}
+	writeJSON(w, map[string]interface{}{"ok": true, "stats": stats})
+}
+
+func (b *browser) handleCRGOptimize(w http.ResponseWriter, r *http.Request) {
+	if b.opt == nil || b.opt.crg == nil {
+		writeError(w, 503, "CRG engine not initialized")
+		return
+	}
+	stats, err := b.opt.crg.Optimize()
+	if err != nil {
+		writeError(w, 500, "crg optimize: "+err.Error())
+		return
+	}
+	writeJSON(w, map[string]interface{}{"ok": true, "stats": stats})
+}
+//-- value_density.go --
+package main
+
+import (
+	"fmt"
+	"math"
+	"net/http"
+	"runtime"
+	"sort"
+	"sync"
+	"time"
+)
+
+type DOMNode struct {
+	UID         string  `json:"uid"`
+	Tag         string  `json:"tag"`
+	Visibility  float64 `json:"visibility"`
+	Area        float64 `json:"area"`
+	InViewport  bool    `json:"inViewport"`
+	Interaction bool    `json:"interaction"`
+	TextLen     int     `json:"textLen"`
+	ImageCount  int     `json:"imageCount"`
+	Depth       int     `json:"depth"`
+	HasAdClass  bool    `json:"hasAdClass"`
+	ValueScore  float64 `json:"valueScore"`
+	CostScore   float64 `json:"costScore"`
+	VD          float64 `json:"vd"`
+}
+
+type VDStats struct {
+	ScanTime    string    `json:"scanTime"`
+	TotalNodes  int       `json:"totalNodes"`
+	AvgVD       float64   `json:"avgVD"`
+	HighValue   int       `json:"highValue"`
+	LowValue    int       `json:"lowValue"`
+	BudgetMB    float64   `json:"budgetMB"`
+	UsedMB      float64   `json:"usedMB"`
+	FreezeZones int       `json:"freezeZones"`
+	TopNodes    []DOMNode `json:"topNodes"`
+}
+
+const vdScanJS = `(function(){
+var t0=performance.now();
+var nodes=[],uid=0;
+function isAd(el){
+var c=(el.className||'')+' '+(el.id||'');
+return c.match(/ad-|ads-|advertis|banner|sponsor|promo|tracker|analytics/i)?true:false;
+}
+function visible(el){
+if(!el.offsetParent)return 0;
+var r=el.getBoundingClientRect();
+var vw=window.innerWidth,vh=window.innerHeight;
+var visW=Math.max(0,Math.min(r.right,vw)-Math.max(r.left,0));
+var visH=Math.max(0,Math.min(r.bottom,vh)-Math.max(r.top,0));
+return (visW*visH)/(r.width*r.height||1);
+}
+function score(el,depth,parentVal){
+var tag=(el.tagName||'').toLowerCase();
+if(tag==='script'||tag==='style'||tag==='meta'||tag==='link')return{node:null,val:0,cost:0};
+uid++;
+var r=el.getBoundingClientRect();
+var area=Math.max(0,r.width*r.height);
+var iv=visible(el);
+var intAct=el.onclick!=null||el.getAttribute('role')==='button'||tag==='button'||tag==='a'||tag==='input'||tag==='select';
+var ad=isAd(el);
+var val=50;ad&&(val-=30);
+if(iv>0.5)val+=30;else if(iv>0)val+=10;
+if(area>50000)val+=20;else if(area>10000)val+=10;
+if(intAct)val+=20;
+if(tag==='main'||tag==='article'||tag==='section')val+=25;
+if(tag==='h1'||tag==='h2'||tag==='h3')val+=15;
+if(tag==='p'&&el.innerText&&el.innerText.trim().length>50)val+=10;
+if(tag==='header')val+=10;
+if(tag==='nav'||tag==='footer'||tag==='aside')val-=10;
+if(depth<4)val+=10;
+if(parentVal>70)val+=5;
+if(val<0)val=0;if(val>100)val=100;
+var cost=10;
+var imgs=el.querySelectorAll('img,svg,video,canvas').length;
+if(imgs>0)cost+=imgs*20;
+if(tag==='iframe')cost+=50;
+if(el.querySelectorAll('*').length>50)cost+=15;
+	if(cost<1)cost=1;
+el.setAttribute('data-vd',Math.round(val/cost*100)/100);
+return{
+node:{uid:'v_'+uid,tag:tag,visibility:Math.round(iv*100)/100,area:Math.round(area),inViewport:iv>0.5,interaction:intAct,textLen:(el.innerText||'').trim().length,imageCount:imgs,depth:depth,hasAdClass:ad,valueScore:Math.round(val*10)/10,costScore:cost,vd:parseFloat(el.getAttribute('data-vd'))},
+val:val,cost:cost};
+}
+function walk(el,depth){
+if(depth>15||!el||el.nodeType!==1)return[];
+var r=score(el,depth,0);
+var res=r.node?[r.node]:[];
+for(var i=0;i<el.children.length;i++){
+var c=walk(el.children[i],depth+1);
+if(c.length){res=res.concat(c);}}
+return res;
+}
+nodes=walk(document.body,0);
+var mem=performance.memory?Math.round(performance.memory.usedJSHeapSize/1048576*10)/10:0;
+return{nodes:nodes,scanTime:Math.round(performance.now()-t0),memory:mem,total:nodes.length};
+})()`
+
+type ValueDensityEngine struct {
+	b       *browser
+	mu      sync.Mutex
+	enabled bool
+	graph   []DOMNode
+	stats   VDStats
+}
+
+func NewValueDensityEngine(b *browser) *ValueDensityEngine {
+	return &ValueDensityEngine{b: b, enabled: true}
+}
+
+func (vd *ValueDensityEngine) Scan() (*VDStats, error) {
+	var raw struct {
+		Nodes  []DOMNode `json:"nodes"`
+		Time   int       `json:"scanTime"`
+		Memory float64   `json:"memory"`
+		Total  int       `json:"total"`
+	}
+	if err := vd.b.syncUnwrapInto(vdScanJS, 15*time.Second, &raw); err != nil {
+		return nil, fmt.Errorf("vd scan failed: %w", err)
+	}
+	vd.mu.Lock()
+	vd.graph = raw.Nodes
+	var totalVD, highVal, lowVal float64
+	for _, n := range raw.Nodes {
+		totalVD += n.VD
+		if n.VD > 1 {
+			highVal++
+		}
+		if n.VD < 0.1 {
+			lowVal++
+		}
+	}
+	avgVD := 0.0
+	if len(raw.Nodes) > 0 {
+		avgVD = math.Round(totalVD/float64(len(raw.Nodes))*100) / 100
+	}
+	budgetMB := memoryBudget()
+	top := raw.Nodes
+	if len(top) > 10 {
+		top = top[:10]
+	}
+	vd.stats = VDStats{
+		ScanTime:    fmt.Sprintf("%dms", raw.Time),
+		TotalNodes:  raw.Total,
+		AvgVD:       avgVD,
+		HighValue:   int(highVal),
+		LowValue:    int(lowVal),
+		BudgetMB:    budgetMB,
+		UsedMB:      raw.Memory,
+		FreezeZones: int(lowVal),
+		TopNodes:    top,
+	}
+	vd.mu.Unlock()
+
+	if vd.stats.UsedMB > vd.stats.BudgetMB*0.8 {
+		vd.evictLowValue()
+	}
+	return &vd.stats, nil
+}
+
+var (
+	mbCacheVal float64
+	mbCacheAt  time.Time
+	mbCacheMu  sync.Mutex
+)
+
+func memoryBudget() float64 {
+	mbCacheMu.Lock()
+	defer mbCacheMu.Unlock()
+	if time.Since(mbCacheAt) < 30*time.Second {
+		return mbCacheVal
+	}
+	var m runtime.MemStats
+	runtime.ReadMemStats(&m)
+	totalGB := float64(m.TotalAlloc) / 1024 / 1024 / 1024
+	if totalGB < 1 {
+		mbCacheVal = 200
+	} else {
+		mbCacheVal = math.Min(400+totalGB*50, 1200)
+	}
+	mbCacheAt = time.Now()
+	return mbCacheVal
+}
+
+func (vd *ValueDensityEngine) evictLowValue() {
+	vd.mu.Lock()
+	defer vd.mu.Unlock()
+	if len(vd.graph) == 0 {
+		return
+	}
+	sorted := make([]DOMNode, len(vd.graph))
+	copy(sorted, vd.graph)
+	sort.Slice(sorted, func(i, j int) bool {
+		return sorted[i].VD < sorted[j].VD
+	})
+	evictCount := int(float64(len(sorted)) * 0.15)
+	if evictCount < 1 {
+		evictCount = 1
+	}
+	if evictCount > len(sorted) {
+		evictCount = len(sorted)
+	}
+	// Early exit if none are below threshold
+	if len(sorted) > 0 && sorted[evictCount-1].VD >= 0.2 {
+		return
+	}
+	evalJS := `(function(){
+var els=document.querySelectorAll('[data-vd]');
+var threshold=0.2;
+for(var i=0;i<els.length;i++){
+var v=parseFloat(els[i].getAttribute('data-vd'));
+if(!isNaN(v)&&v<threshold&&els[i].tagName!=='BODY'&&els[i].tagName!=='HTML'&&els[i].tagName!=='HEAD'){
+if(els[i].tagName==='IMG'||els[i].tagName==='IFRAME'){els[i].style.display='none';els[i].setAttribute('data-vd-evicted','1');continue;}
+if(els[i].tagName==='SCRIPT'||els[i].tagName==='LINK'){els[i].disabled=true;continue;}
+els[i].style.opacity='0.3';els[i].style.pointerEvents='none';els[i].setAttribute('data-vd-evicted','1');}
+}})()`
+	vd.b.syncExec(evalJS)
+}
+
+func (vd *ValueDensityEngine) Optimize() (*VDStats, error) {
+	stats, err := vd.Scan()
+	if err != nil {
+		return nil, err
+	}
+	vd.evictLowValue()
+	vd.applyScheduling()
+	return stats, nil
+}
+
+func (vd *ValueDensityEngine) applyScheduling() {
+	vd.mu.Lock()
+	if len(vd.graph) == 0 {
+		vd.mu.Unlock()
+		return
+	}
+	graph := make([]DOMNode, len(vd.graph))
+	copy(graph, vd.graph)
+	vd.mu.Unlock()
+
+	sort.Slice(graph, func(i, j int) bool {
+		return graph[i].VD > graph[j].VD
+	})
+	var highVD, lowVD int
+	var totalCost float64
+	for _, n := range graph {
+		totalCost += n.CostScore
+		if n.VD > 1 {
+			highVD++
+		}
+		if n.VD < 0.1 && n.CostScore > 30 {
+			lowVD++
+		}
+	}
+	if lowVD > 3 && highVD < lowVD {
+		freezeJS := `(function(){
+var all=document.querySelectorAll('[data-vd]');
+for(var i=0;i<all.length;i++){
+var vd=parseFloat(all[i].getAttribute('data-vd')||'99');
+var tag=all[i].tagName;
+if(vd>=0.2)continue;
+if(tag==='IMG'){all[i].loading='lazy';if(!all[i].complete)all[i].style.visibility='hidden'}
+else if(tag==='IFRAME'){var r=all[i].getBoundingClientRect();if(r.top>window.innerHeight+200&&r.bottom< -200)all[i].srcdoc='';}
+else if(tag!=='BODY'&&tag!=='HTML'&&tag!=='HEAD'){all[i].style.opacity='0.3';all[i].style.pointerEvents='none';}}
+var iframes=document.querySelectorAll('iframe:not([data-vd])');
+for(var i=0;i<iframes.length;i++){
+var r=iframes[i].getBoundingClientRect();
+if(r.top>window.innerHeight+200&&r.bottom< -200)iframes[i].srcdoc=''}})()`
+		vd.b.syncExec(freezeJS)
+	}
+}
+
+func (b *browser) handleVDSnapshot(w http.ResponseWriter, r *http.Request) {
+	if b.opt == nil || b.opt.vd == nil {
+		writeError(w, 503, "VD engine not initialized")
+		return
+	}
+	stats, err := b.opt.vd.Scan()
+	if err != nil {
+		writeError(w, 500, "vd scan: "+err.Error())
+		return
+	}
+	writeJSON(w, map[string]interface{}{"ok": true, "stats": stats})
+}
+
+func (b *browser) handleVDOptimize(w http.ResponseWriter, r *http.Request) {
+	if b.opt == nil || b.opt.vd == nil {
+		writeError(w, 503, "VD engine not initialized")
+		return
+	}
+	stats, err := b.opt.vd.Optimize()
+	if err != nil {
+		writeError(w, 500, "vd optimize: "+err.Error())
+		return
+	}
+	writeJSON(w, map[string]interface{}{"ok": true, "stats": stats})
+}
+//-- dom_compress.go --
+// DOM Compression â€” binary-serialized DOM snapshot transport
+package main
+
+import (
+	_ "embed"
+	"net/http"
+	"sync"
+	"time"
+)
+
+//go:embed dom_compress.js
+var domCompressJS string
+
+type DOMCompressEngine struct {
+	b       *browser
+	mu      sync.Mutex
+	enabled bool
+	stats   DOMCompressStats
+}
+
+type DOMCompressStats struct {
+	LastSize    int     `json:"lastSize"`
+	Compressed  int     `json:"compressed"`
+	Ratio       string  `json:"ratio"`
+	Nodes       int     `json:"nodes"`
+	Status      string  `json:"status"`
+}
+
+const domCompressGatherJS = `(function(){
+var s=window.__mbDOMC;if(!s)return{lastSize:0,compressed:0,ratio:'0%',nodes:0,status:'n/a'};
+var r={lastSize:s._lastSize||0,compressed:s._comp||0,nodes:s._nodes||0,status:'ok'};
+r.ratio=s._lastSize>0?Math.round(s._comp/s._lastSize*100)+'%':'0%';
+return r;
+})()`
+
+func NewDOMCompressEngine(b *browser) *DOMCompressEngine {
+	return &DOMCompressEngine{b: b, enabled: true}
+}
+
+func (d *DOMCompressEngine) Start() {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if !d.enabled {
+		return
+	}
+	d.b.syncExec(domCompressJS)
+}
+
+func (d *DOMCompressEngine) Gather() *DOMCompressStats {
+	var s DOMCompressStats
+	if err := d.b.syncUnwrapInto(domCompressGatherJS, 5*time.Second, &s); err != nil {
+		return &d.stats
+	}
+	d.mu.Lock()
+	d.stats = s
+	d.mu.Unlock()
+	return &s
+}
+
+func (b *browser) handleDOMCompressStats(w http.ResponseWriter, r *http.Request) {
+	if b.opt == nil || b.opt.domCompress == nil {
+		writeError(w, 503, "DOM Compress not init")
+		return
+	}
+	s := b.opt.domCompress.Gather()
+	writeJSON(w, map[string]interface{}{"ok": true, "stats": s})
+}
+//-- qse.go --
+package main
+
+import (
+	"encoding/json"
+	"net/http"
+	"strings"
+	"sync"
+	"time"
+)
+
+type QSEEngine struct {
+	b       *browser
+	mu      sync.RWMutex
+	enabled bool
+	shortcuts map[string]string
+	clickHeat map[string]int
+	stats    QSEStats
+}
+
+type QSEStats struct {
+	Shortcuts   int    `json:"shortcuts"`
+	Resolved    int    `json:"resolved"`
+	ClickHeat   int    `json:"clickHeat"`
+	TopDomain   string `json:"topDomain"`
+	Status      string `json:"status"`
+}
+
+var defaultShortcuts = map[string]string{
+	"yt":    "https://youtube.com/results?search_query=%s",
+	"gh":    "https://github.com/search?q=%s",
+	"w":     "https://en.wikipedia.org/wiki/%s",
+	"g":     "https://www.google.com/search?q=%s",
+	"reddit": "https://www.reddit.com/search/?q=%s",
+	"tw":    "https://twitter.com/search?q=%s",
+	"x":     "https://x.com/search?q=%s",
+	"amz":   "https://www.amazon.com/s?k=%s",
+	"so":    "https://stackoverflow.com/search?q=%s",
+	"maps": "https://www.google.com/maps/search/%s",
+	"img":   "https://www.google.com/search?tbm=isch&q=%s",
+	"news":  "https://news.google.com/search?q=%s",
+	"npm":   "https://www.npmjs.com/search?q=%s",
+	"pypi":  "https://pypi.org/search/?q=%s",
+	"wiki":  "https://en.wikipedia.org/wiki/%s",
+}
+
+const qseClickHeatJS = `(function(){
+if(window.__mbQSE)return;
+var Q=window.__mbQSE={clicks:{}};
+try{var s=localStorage.getItem('__qse_clicks');if(s)Q.clicks=JSON.parse(s);}catch(e){}
+document.addEventListener('click',function(e){
+var a=e.target.closest('a');
+if(!a||!a.href)return;
+try{
+var u=new URL(a.href);
+var d=u.hostname.replace('www.','');
+Q.clicks[d]=(Q.clicks[d]||0)+1;
+try{localStorage.setItem('__qse_clicks',JSON.stringify(Q.clicks));}catch(ex){}
+}catch(ex){}
+},true);
+})()`
+
+func NewQSEEngine(b *browser) *QSEEngine {
+	q := &QSEEngine{
+		b:         b,
+		enabled:   true,
+		shortcuts: make(map[string]string),
+		clickHeat: make(map[string]int),
+	}
+	for k, v := range defaultShortcuts {
+		q.shortcuts[k] = v
+	}
+	return q
+}
+
+func (q *QSEEngine) Start() {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	if !q.enabled {
+		return
+	}
+	q.b.syncExec(qseClickHeatJS)
+}
+
+func (q *QSEEngine) Resolve(input string) (string, bool) {
+	q.mu.RLock()
+	defer q.mu.RUnlock()
+	input = strings.TrimSpace(input)
+	parts := strings.SplitN(input, " ", 2)
+	if len(parts) < 2 {
+		return "", false
+	}
+	key := strings.ToLower(parts[0])
+	query := strings.TrimSpace(parts[1])
+	tpl, ok := q.shortcuts[key]
+	if !ok {
+		return "", false
+	}
+	q.stats.Resolved++
+	return strings.ReplaceAll(tpl, "%s", query), true
+}
+
+func (q *QSEEngine) GatherClickHeat() {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	var clicks map[string]int
+	if err := q.b.syncUnwrapInto("(function(){var q=window.__mbQSE;if(!q)return{};try{return q.clicks;}catch(e){return{};};})()", 5*time.Second, &clicks); err != nil {
+		return
+	}
+	// Cap at 500 domains â€” evict latest merged entries if full
+	for d, c := range clicks {
+		if len(q.clickHeat) >= 500 {
+			break
+		}
+		q.clickHeat[d] = c
+	}
+}
+
+func (q *QSEEngine) Stats() *QSEStats {
+	q.mu.RLock()
+	defer q.mu.RUnlock()
+	q.stats.Shortcuts = len(q.shortcuts)
+	q.stats.ClickHeat = len(q.clickHeat)
+	var top string
+	var maxC int
+	for d, c := range q.clickHeat {
+		if c > maxC {
+			maxC = c
+			top = d
+		}
+	}
+	q.stats.TopDomain = top
+	q.stats.Status = "ok"
+	return &q.stats
+}
+
+func (b *browser) handleQSEStats(w http.ResponseWriter, r *http.Request) {
+	if b.opt == nil || b.opt.qse == nil {
+		writeError(w, 503, "QSE not init")
+		return
+	}
+	s := b.opt.qse.Stats()
+	writeJSON(w, map[string]interface{}{"ok": true, "stats": s})
+}
+
+func (b *browser) handleQSEStart(w http.ResponseWriter, r *http.Request) {
+	if b.opt == nil || b.opt.qse == nil {
+		writeError(w, 503, "QSE not init")
+		return
+	}
+	b.opt.qse.Start()
+	writeJSON(w, map[string]interface{}{"ok": true, "msg": "QSE click heat started"})
+}
+
+func (b *browser) handleQSEAdd(w http.ResponseWriter, r *http.Request) {
+	if b.opt == nil || b.opt.qse == nil {
+		writeError(w, 503, "QSE not init")
+		return
+	}
+	var req struct {
+		Key  string `json:"key"`
+		URL  string `json:"url"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, 400, "bad request")
+		return
+	}
+	req.Key = strings.TrimSpace(strings.ToLower(req.Key))
+	if req.Key == "" {
+		writeError(w, 400, "key required")
+		return
+	}
+	b.opt.qse.mu.Lock()
+	if len(b.opt.qse.shortcuts) >= 100 {
+		for k := range b.opt.qse.shortcuts {
+			delete(b.opt.qse.shortcuts, k)
+			break
+		}
+	}
+	b.opt.qse.shortcuts[req.Key] = req.URL
+	b.opt.qse.mu.Unlock()
+	writeJSON(w, map[string]interface{}{"ok": true, "shortcuts": len(b.opt.qse.shortcuts)})
+}

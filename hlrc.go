@@ -22,19 +22,19 @@ const (
 
 // HLRC LOD levels
 const (
-	HLRCLODFull    = 0
-	HLRCLODReduced = 1
+	HLRCLODFull     = 0
+	HLRCLODReduced  = 1
 	HLRCLODSkeleton = 2
-	HLRCLODCold    = 3
-	HLRCLODEvicted = 4
+	HLRCLODCold     = 3
+	HLRCLODEvicted  = 4
 )
 
 // Heat constants (uint8 0-255)
 const (
-	HLRCHeatMax       = 255
-	HLRCHeatDecay     = 8
-	HLRCHeatAccess    = 32
-	HLRCHeatHotThresh = 180
+	HLRCHeatMax        = 255
+	HLRCHeatDecay      = 8
+	HLRCHeatAccess     = 32
+	HLRCHeatHotThresh  = 180
 	HLRCHeatWarmThresh = 80
 )
 
@@ -42,29 +42,29 @@ var hlrcLODNames = []string{"full", "reduced", "skeleton", "cold", "evicted"}
 
 // RTObject is the compact runtime object header (16 bytes critical, ~72 total)
 type RTObject struct {
-	Heat        uint8   `json:"heat"`
-	LODLevel    uint8   `json:"lodLevel"`
-	Flags       uint16  `json:"flags"`
-	LastAccess  uint32  `json:"lastAccessTick"`
-	RestoreCost uint32  `json:"restoreCostHint"`
-	DepCount    uint16  `json:"depCount"`
+	Heat        uint8  `json:"heat"`
+	LODLevel    uint8  `json:"lodLevel"`
+	Flags       uint16 `json:"flags"`
+	LastAccess  uint32 `json:"lastAccessTick"`
+	RestoreCost uint32 `json:"restoreCostHint"`
+	DepCount    uint16 `json:"depCount"`
 
 	key       string
 	kind      string
 	createdAt time.Time
 
-	reuseProb  float64
+	reuseProb    float64
 	interactProb float64
-	ramCost    int64
-	cpuCost    int64
-	gpuCost    int64
-	netCost    int64
+	ramCost      int64
+	cpuCost      int64
+	gpuCost      int64
+	netCost      int64
 }
 
 const (
-	RTFlagActive  = 1 << 0
-	RTFlagPinned  = 1 << 1
-	RTFlagDirty   = 1 << 2
+	RTFlagActive = 1 << 0
+	RTFlagPinned = 1 << 1
+	RTFlagDirty  = 1 << 2
 )
 
 // HLRC is the Heat-LOD Runtime Core
@@ -83,10 +83,10 @@ type HLRC struct {
 	// Conversion from float64 heat (UHE-style) to uint8
 	heatScale float64
 
-	tick       uint32
-	stopCh     chan struct{}
-	tickRate   time.Duration
-	lastTick   time.Time
+	tick     uint32
+	stopCh   chan struct{}
+	tickRate time.Duration
+	lastTick time.Time
 
 	// Budget targets
 	ramBudgetMB  int64
@@ -116,14 +116,14 @@ type HLRCStats struct {
 
 func NewHLRC() *HLRC {
 	h := &HLRC{
-		enabled:    true,
-		objects:    make(map[string]*RTObject),
-		heatScale:  255.0,
-		tickRate:   10 * time.Second,
-		ramBudgetMB: 50,
+		enabled:      true,
+		objects:      make(map[string]*RTObject),
+		heatScale:    255.0,
+		tickRate:     10 * time.Second,
+		ramBudgetMB:  50,
 		cpuBudgetPct: 80,
-		hysteresis: make(map[string]time.Time),
-		maxObjects: 2000,
+		hysteresis:   make(map[string]time.Time),
+		maxObjects:   2000,
 	}
 	for i := 0; i <= HLRCHeatMax; i++ {
 		h.buckets[i] = make(map[string]int)
@@ -198,21 +198,21 @@ func (h *HLRC) Register(key, kind string, restoreCost uint32) *RTObject {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
-	if len(h.objects) >= h.maxObjects {
-		h.evictColdest(50)
+	if n := len(h.objects) - h.maxObjects + 1; n > 0 {
+		h.evictColdest(n)
 	}
 
 	obj := &RTObject{
-		Heat:        0,
-		LODLevel:    HLRCLODFull,
-		LastAccess:  h.tick,
-		RestoreCost: restoreCost,
-		key:         key,
-		kind:        kind,
-		createdAt:   time.Now(),
-		reuseProb:   0.5,
+		Heat:         0,
+		LODLevel:     HLRCLODFull,
+		LastAccess:   h.tick,
+		RestoreCost:  restoreCost,
+		key:          key,
+		kind:         kind,
+		createdAt:    time.Now(),
+		reuseProb:    0.5,
 		interactProb: 0.5,
-		ramCost:   int64(restoreCost),
+		ramCost:      int64(restoreCost),
 	}
 	if obj.ramCost < 100 {
 		obj.ramCost = 100
@@ -480,15 +480,15 @@ func (h *HLRC) ObjectSnapshot() []map[string]interface{} {
 	for _, obj := range h.objects {
 		density, _ := h.computeUtilityDensity(obj)
 		out = append(out, map[string]interface{}{
-			"key":         obj.key,
-			"kind":        obj.kind,
-			"heat":        obj.Heat,
-			"lodLevel":    obj.LODLevel,
-			"lodLabel":    hlrcLODNames[obj.LODLevel],
-			"flags":       obj.Flags,
-			"lastAccess":  obj.LastAccess,
-			"restoreCost": obj.RestoreCost,
-			"depCount":    obj.DepCount,
+			"key":            obj.key,
+			"kind":           obj.kind,
+			"heat":           obj.Heat,
+			"lodLevel":       obj.LODLevel,
+			"lodLabel":       hlrcLODNames[obj.LODLevel],
+			"flags":          obj.Flags,
+			"lastAccess":     obj.LastAccess,
+			"restoreCost":    obj.RestoreCost,
+			"depCount":       obj.DepCount,
 			"utilityDensity": fmt.Sprintf("%.6f", density),
 		})
 	}
@@ -559,7 +559,7 @@ func (b *browser) handleHLRCConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req struct {
-		RAMBudgetMB int64   `json:"ramBudgetMB"`
+		RAMBudgetMB  int64   `json:"ramBudgetMB"`
 		CPUBudgetPct float64 `json:"cpuBudgetPct"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {

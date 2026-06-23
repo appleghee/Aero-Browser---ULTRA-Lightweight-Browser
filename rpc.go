@@ -14,15 +14,15 @@ type RPCEngine struct {
 }
 
 type RPCStats struct {
-	Entries    int            `json:"entries"`
-	Hits       int            `json:"hits"`
-	Misses     int            `json:"misses"`
-	Evicted    int            `json:"evicted"`
-	HitRate    string         `json:"hitRate"`
-	MemorySaved string        `json:"memorySaved"`
-	Genomes    int            `json:"genomes"`
-	TopDomain  string         `json:"topDomain"`
-	Status     string         `json:"status"`
+	Entries     int    `json:"entries"`
+	Hits        int    `json:"hits"`
+	Misses      int    `json:"misses"`
+	Evicted     int    `json:"evicted"`
+	HitRate     string `json:"hitRate"`
+	MemorySaved string `json:"memorySaved"`
+	Genomes     int    `json:"genomes"`
+	TopDomain   string `json:"topDomain"`
+	Status      string `json:"status"`
 }
 
 const rpcJS = `(function(){

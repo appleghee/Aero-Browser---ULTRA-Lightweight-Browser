@@ -18,6 +18,28 @@ type NDFCache struct {
 	maxSize  int64
 	currSize int64
 	hlrc     *HLRC
+
+	inFlightMu sync.RWMutex
+	inFlight   map[string]chan struct{}
+}
+
+func (n *NDFCache) getOrStartFetch(url string) (cached *NDFEntry, waitCh chan struct{}, isNew bool) {
+	n.inFlightMu.Lock()
+	defer n.inFlightMu.Unlock()
+	if ch, ok := n.inFlight[url]; ok {
+		return nil, ch, false
+	}
+	n.inFlight[url] = make(chan struct{})
+	return nil, nil, true
+}
+
+func (n *NDFCache) finishFetch(url string) {
+	n.inFlightMu.Lock()
+	defer n.inFlightMu.Unlock()
+	if ch, ok := n.inFlight[url]; ok {
+		close(ch)
+		delete(n.inFlight, url)
+	}
 }
 
 func (n *NDFCache) SetHLRC(h *HLRC) { n.hlrc = h }
@@ -43,9 +65,39 @@ func NewNDFCache(maxMB int64) *NDFCache {
 }
 
 func (n *NDFCache) Fetch(url string, onData func([]byte, bool) error) (*NDFEntry, error) {
+	// Dedup: if another goroutine is already fetching the same URL, wait for it
 	n.mu.RLock()
 	cached := n.entries[url]
 	n.mu.RUnlock()
+	if cached == nil {
+		n.inFlightMu.RLock()
+		ch, ok := n.inFlight[url]
+		n.inFlightMu.RUnlock()
+		if ok {
+			<-ch
+			n.mu.RLock()
+			cached = n.entries[url]
+			n.mu.RUnlock()
+			if cached != nil {
+				return cached, nil
+			}
+		}
+	}
+
+	// Mark in-flight
+	n.inFlightMu.Lock()
+	if _, ok := n.inFlight[url]; ok {
+		n.inFlightMu.Unlock()
+		n.mu.RLock()
+		cached = n.entries[url]
+		n.mu.RUnlock()
+		if cached != nil {
+			return cached, nil
+		}
+	}
+	n.inFlight[url] = make(chan struct{})
+	n.inFlightMu.Unlock()
+	defer n.finishFetch(url)
 
 	// Build request headers
 	headers := make(http.Header)
@@ -205,7 +257,7 @@ func (n *NDFCache) evictIfNeeded() {
 func (n *NDFCache) Stats() map[string]interface{} {
 	n.mu.RLock()
 	defer n.mu.RUnlock()
-	
+
 	totalHits := int64(0)
 	totalAccesses := uint64(0)
 	for _, e := range n.entries {
@@ -214,12 +266,12 @@ func (n *NDFCache) Stats() map[string]interface{} {
 	}
 
 	return map[string]interface{}{
-		"cached":        len(n.entries),
-		"size_mb":       n.currSize / (1024 * 1024),
-		"max_mb":        n.maxSize / (1024 * 1024),
+		"cached":         len(n.entries),
+		"size_mb":        n.currSize / (1024 * 1024),
+		"max_mb":         n.maxSize / (1024 * 1024),
 		"total_accesses": totalAccesses,
-		"cache_hits":    totalHits,
-		"hit_rate":      fmt.Sprintf("%.1f%%", float64(totalHits)*100/float64(totalAccesses+1)),
+		"cache_hits":     totalHits,
+		"hit_rate":       fmt.Sprintf("%.1f%%", float64(totalHits)*100/float64(totalAccesses+1)),
 	}
 }
 

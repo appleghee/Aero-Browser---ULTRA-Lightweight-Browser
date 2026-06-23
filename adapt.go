@@ -80,7 +80,7 @@ var siteEngineBlacklist = map[SiteType][]string{
 	},
 }
 
-func newAdapt() *Adapt {
+func NewAdapt() *Adapt {
 	return &Adapt{
 		disabled: make(map[string]bool),
 	}
@@ -91,103 +91,100 @@ func classifySite(rawURL string) SiteType {
 	if err != nil || u.Host == "" {
 		return SiteGeneral
 	}
-	host := strings.ToLower(u.Host)
+	host := u.Hostname()
+	host = strings.ToLower(host)
+
+	match := func(domain string) bool {
+		return host == domain || strings.HasSuffix(host, "."+domain)
+	}
+
+	// Email (must be checked BEFORE generic search e.g. mail.google.com)
+	if match("mail.google.com") ||
+		match("outlook.com") || match("live.com") || host == "outlook.live.com" ||
+		match("protonmail.com") ||
+		match("zoho.com") ||
+		match("fastmail.com") {
+		return SiteEmail
+	}
 
 	// Search engines
-	if strings.Contains(host, "google.") ||
-		strings.Contains(host, "duckduckgo.") ||
-		strings.Contains(host, "bing.") ||
-		strings.Contains(host, "yahoo.") ||
-		strings.Contains(host, "baidu.") ||
-		strings.Contains(host, "yandex.") ||
-		strings.Contains(host, "ecosia.") ||
-		strings.Contains(host, "qwant.") ||
+	if match("google.com") || match("google.co") ||
+		match("duckduckgo.com") ||
+		match("bing.com") ||
+		match("yahoo.com") ||
+		match("baidu.com") ||
+		match("yandex.com") ||
+		match("ecosia.org") ||
+		match("qwant.com") ||
 		host == "search.brave.com" ||
 		host == "www.startpage.com" {
 		return SiteSearch
 	}
 
 	// Code/Dev
-	if strings.Contains(host, "github.") ||
-		strings.Contains(host, "gitlab.") ||
-		strings.Contains(host, "bitbucket.") ||
-		strings.Contains(host, "stackoverflow.") ||
-		strings.Contains(host, "stackexchange.") ||
-		strings.Contains(host, "npmjs.") ||
-		strings.Contains(host, "pypi.") ||
-		strings.Contains(host, "docs.") ||
-		strings.Contains(host, "developer.") ||
-		strings.Contains(host, "codepen.") ||
-		strings.Contains(host, "codesandbox.") ||
-		strings.Contains(host, "replit.") {
+	if match("github.com") || match("github.io") ||
+		match("gitlab.com") ||
+		match("bitbucket.org") ||
+		match("stackoverflow.com") ||
+		match("stackexchange.com") ||
+		match("npmjs.com") ||
+		match("pypi.org") ||
+		match("codepen.io") ||
+		match("codesandbox.io") ||
+		match("replit.com") ||
+		match("readthedocs.io") {
 		return SiteCode
 	}
 
 	// Video
-	if strings.Contains(host, "youtube.") ||
-		strings.Contains(host, "youtu.be") ||
-		strings.Contains(host, "twitch.") ||
-		strings.Contains(host, "vimeo.") ||
-		strings.Contains(host, "dailymotion.") ||
-		strings.Contains(host, "netflix.") ||
-		strings.Contains(host, "hulu.") ||
-		strings.Contains(host, "spotify.") ||
-		strings.Contains(host, "tiktok.") {
+	if match("youtube.com") || host == "youtu.be" ||
+		match("twitch.tv") ||
+		match("vimeo.com") ||
+		match("dailymotion.com") ||
+		match("netflix.com") ||
+		match("hulu.com") ||
+		match("spotify.com") ||
+		match("tiktok.com") {
 		return SiteVideo
 	}
 
 	// Social
-	if strings.Contains(host, "facebook.") ||
-		strings.Contains(host, "twitter.") ||
-		strings.Contains(host, "x.com") ||
-		strings.Contains(host, "reddit.") ||
-		strings.Contains(host, "instagram.") ||
-		strings.Contains(host, "linkedin.") ||
-		strings.Contains(host, "discord.") ||
-		strings.Contains(host, "telegram.") ||
-		strings.Contains(host, "whatsapp.") ||
-		strings.Contains(host, "t.me") {
+	if match("facebook.com") || match("fb.com") ||
+		match("twitter.com") || host == "x.com" || match("x.com") ||
+		match("reddit.com") ||
+		match("instagram.com") ||
+		match("linkedin.com") ||
+		match("discord.com") || match("discord.gg") ||
+		match("telegram.org") ||
+		match("whatsapp.com") ||
+		host == "t.me" {
 		return SiteSocial
 	}
 
 	// News
-	if strings.Contains(host, "news.") ||
-		strings.Contains(host, "cnn.") ||
-		strings.Contains(host, "bbc.") ||
-		strings.Contains(host, "nytimes.") ||
-		strings.Contains(host, "reuters.") ||
-		strings.Contains(host, "bloomberg.") ||
-		strings.Contains(host, "medium.") ||
-		strings.Contains(host, "substack.") {
+	if match("cnn.com") ||
+		match("bbc.com") || match("bbc.co.uk") ||
+		match("nytimes.com") ||
+		match("reuters.com") ||
+		match("bloomberg.com") ||
+		match("medium.com") ||
+		match("substack.com") {
 		return SiteNews
 	}
 
 	// E-commerce
-	if strings.Contains(host, "amazon.") ||
-		strings.Contains(host, "ebay.") ||
-		strings.Contains(host, "etsy.") ||
-		strings.Contains(host, "shopify.") ||
-		strings.Contains(host, "walmart.") ||
-		strings.Contains(host, "bestbuy.") ||
-		strings.Contains(host, "target.") ||
-		strings.Contains(host, "alibaba.") ||
-		strings.Contains(host, "aliexpress.") ||
-		strings.Contains(host, "shopee.") ||
-		strings.Contains(host, "lazada.") ||
-		strings.Contains(host, "taobao.") ||
-		strings.Contains(host, "tmall.") {
+	if match("amazon.com") || match("amazon.co.uk") || match("amazon.de") || match("amazon.fr") || match("amazon.co.jp") ||
+		match("ebay.com") ||
+		match("etsy.com") ||
+		match("walmart.com") ||
+		match("bestbuy.com") ||
+		match("target.com") ||
+		match("aliexpress.com") || match("alibaba.com") ||
+		match("shopee.com") || match("shopee.sg") ||
+		match("lazada.com") || match("lazada.sg") ||
+		match("taobao.com") ||
+		match("tmall.com") {
 		return SiteEcommerce
-	}
-
-	// Email
-	if strings.Contains(host, "mail.") ||
-		strings.Contains(host, "gmail.") ||
-		strings.Contains(host, "outlook.") ||
-		strings.Contains(host, "protonmail.") ||
-		strings.Contains(host, "zoho.") ||
-		strings.Contains(host, "fastmail.") ||
-		host == "mail.google.com" {
-		return SiteEmail
 	}
 
 	return SiteGeneral
@@ -273,9 +270,7 @@ func (b *browser) handleAdaptStats(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, map[string]interface{}{
-		"ok":      true,
-		"adapt":   b.opt.adapt.Profile(),
+		"ok":    true,
+		"adapt": b.opt.adapt.Profile(),
 	})
 }
-
-

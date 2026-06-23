@@ -14,13 +14,13 @@ type EHSEngine struct {
 }
 
 type EHSStats struct {
-	Hot     int     `json:"hot"`
-	Warm    int     `json:"warm"`
-	Cold    int     `json:"cold"`
-	Dormant int     `json:"dormant"`
-	Splits  int     `json:"splits"`
-	Total   int     `json:"total"`
-	Status  string  `json:"status"`
+	Hot     int    `json:"hot"`
+	Warm    int    `json:"warm"`
+	Cold    int    `json:"cold"`
+	Dormant int    `json:"dormant"`
+	Splits  int    `json:"splits"`
+	Total   int    `json:"total"`
+	Status  string `json:"status"`
 }
 
 const ehsJS = `(function(){

@@ -29,10 +29,10 @@ type QuickOptEngine struct {
 }
 
 type MDDPState struct {
-	DNSHits     int            `json:"dnsHits"`
-	TCPHits     int            `json:"tcpHits"`
-	CacheHits   int            `json:"cacheHits"`
-	dnsCache    map[string]int64
+	DNSHits   int `json:"dnsHits"`
+	TCPHits   int `json:"tcpHits"`
+	CacheHits int `json:"cacheHits"`
+	dnsCache  map[string]int64
 }
 
 type HTPState struct {
@@ -164,8 +164,9 @@ else if(!url.match(/\.(png|jpg|webp|gif|svg|avif|woff2?|mp4|fetch|api)/i)||prio=
 window.__mbPSFQ.total++;
 window.__mbPSFQ[cls]=(window.__mbPSFQ[cls]||0)+1;
 if(cls==='low'){
+var delay=Math.min(20,5+window.__mbPSFQ.low*0.5);
 return new Promise(function(r){
-setTimeout(function(){r(_fetch(u,o));},10);});}
+setTimeout(function(){r(_fetch(u,o));},delay);});}
 return _fetch(u,o);
 };
 var _XHR=XMLHttpRequest.prototype.open;
@@ -288,7 +289,7 @@ func (q *QuickOptEngine) GatherStats() *QuickOptStats {
 		} `json:"mddp"`
 		HTP struct {
 			Preconnects int `json:"preconnects"`
-			Hovers  int `json:"hovers"`
+			Hovers      int `json:"hovers"`
 		} `json:"htp"`
 		PSFQ struct {
 			Critical int `json:"critical"`
@@ -355,9 +356,9 @@ return{hits:s._hits||0,tcp:s._tcp||0,cache:Object.keys(s.cache||{}).length};
 
 func (q *QuickOptEngine) gatherHTP() *HTPState {
 	var s struct {
-		Hovers    int `json:"hovers"`
-		Cancels   int `json:"cancels"`
-		Connects  int `json:"connects"`
+		Hovers   int `json:"hovers"`
+		Cancels  int `json:"cancels"`
+		Connects int `json:"connects"`
 	}
 	if err := q.b.syncUnwrapInto(`(function(){
 var s=window.__mbHTP||{};

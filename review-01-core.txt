@@ -1,9 +1,12 @@
+﻿// HYPERSPEED BROWSER — Core & Main Engine
+
+//-- main.go --
 package main
 
 import (
+	_ "embed"
 	"bytes"
 	"crypto/rand"
-	_ "embed"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -58,8 +61,8 @@ document.addEventListener("keydown",function(e){if(e.ctrlKey&&e.shiftKey&&e.code
 document.addEventListener("keydown",function(e){if(e.ctrlKey&&e.shiftKey&&e.code==="KeyH"){e.preventDefault();if(typeof window.goNavigate==='function'){window.goNavigate('hyperspeed://console')}else{var b=window.__mbBase||'http://127.0.0.1:'+(window.__mbPort||6969);fetch(b+'/api/navigate',{method:'POST',headers:{'Content-Type':'application/json','X-API-Token':window.__mbToken||''},body:'{"url":"hyperspeed://console"}'})['catch'](function(){})}}},true);
 })();`
 
-// Navigation bar — always-visible, real navigation (Back, Forward, Reload, URL input)
-// Navigation bar — always-visible, real navigation (Back, Forward, Reload, URL input)
+// Navigation bar â€” always-visible, real navigation (Back, Forward, Reload, URL input)
+// Navigation bar â€” always-visible, real navigation (Back, Forward, Reload, URL input)
 const navBarJS = `(function(){
 if(document.getElementById('__mb_nav'))return;
 var s=document.createElement('style');
@@ -70,11 +73,11 @@ s.textContent='#__mb_nav{position:fixed;top:0;left:0;right:0;height:36px;z-index
 '#__mb_nav input{flex:1;height:26px;padding:0 10px;background:#16213e;border:1px solid #0f3460;border-radius:6px;color:#e0e0e0;font-size:13px;outline:none;min-width:0;margin:0 2px}'+
 '#__mb_nav input:focus{border-color:#4fc3f7}'+
 '#__mb_nav input::placeholder{color:#555}'+
-'#__mb_spacer{height:36px;width:1px;margin:0;padding:0;border:none;flex-shrink:0}';
+'body{padding-top:36px!important}';
 (document.head||document.documentElement).appendChild(s);
 var d=document.createElement('div');d.id='__mb_nav';
 d.innerHTML='<button id="__n_b" title="Back (Alt+Left)">\u25C0</button><button id="__n_f" title="Forward (Alt+Right)">\u25B6</button><button id="__n_r" title="Reload (Ctrl+R)">\u21BB</button><input id="__n_u" placeholder="Search or enter URL..."><button id="__n_h" style="font-size:14px;color:#4fc3f7">\u2302</button>';
-function appendBar(){var b=document.body||document.documentElement;if(b){b.insertBefore(d,b.firstChild);var sp=document.getElementById('__mb_spacer')||document.createElement('div');sp.id='__mb_spacer';b.insertBefore(sp,d.nextSibling);wireBar()}else{requestAnimationFrame(appendBar)}}
+function appendBar(){var b=document.body||document.documentElement;if(b){b.insertBefore(d,b.firstChild);wireBar()}else{requestAnimationFrame(appendBar)}}
 appendBar();
 var u,b,f,r,h;function wireBar(){
 u=document.getElementById('__n_u');b=document.getElementById('__n_b');f=document.getElementById('__n_f');r=document.getElementById('__n_r');h=document.getElementById('__n_h');
@@ -84,11 +87,8 @@ b.addEventListener('click',function(){if(!b.disabled)window.goBack()});
 f.addEventListener('click',function(){if(!f.disabled)window.goForward()});
 r.addEventListener('click',function(){window.goReload()});
 h.addEventListener('click',function(){window.goNavigate('hyperspeed://console')});
-var lu='';upd();
+var lu='';upd();setInterval(upd,300);
 function upd(){var c=location.href;if(c!='about:blank'&&c!==lu){lu=c;u.value=c}try{var ns=JSON.parse(window.getNavState()||'{}');b.disabled=!ns.b;f.disabled=!ns.f}catch(e){}}
-var _push=history.pushState;history.pushState=function(){_push.apply(this,arguments);upd();};
-var _rep=history.replaceState;history.replaceState=function(){_rep.apply(this,arguments);upd();};
-window.addEventListener('popstate',upd);
 }
 document.addEventListener('keydown',function(e){
 if(e.ctrlKey&&e.code=='KeyL'){e.preventDefault();var i=document.getElementById('__n_u');if(i){i.focus();i.select()}}
@@ -159,14 +159,14 @@ type browser struct {
 	apiPort  int
 	apiToken string
 
-	mu            sync.Mutex
-	lastBrowseURL string
-	browseHistory []string
-	evalID        int
-	evalReqs      map[int]chan string
-	evalPool      sync.Pool
-	srv           *http.Server
-	portFile      string
+	mu              sync.Mutex
+	lastBrowseURL   string
+	browseHistory   []string
+	evalID   int
+	evalReqs map[int]chan string
+	evalPool sync.Pool
+	srv      *http.Server
+	portFile string
 
 	startHTML string
 	opt       *Optimizer
@@ -249,12 +249,7 @@ func main() {
 		defer app.mu.Unlock()
 		canBack := app.idx > 0
 		canFwd := app.idx < len(app.history)-1
-		bs := func(v bool) string {
-			if v {
-				return "true"
-			}
-			return "false"
-		}
+		bs := func(v bool) string { if v { return "true" }; return "false" }
 		return `{"b":` + bs(canBack) + `,"f":` + bs(canFwd) + `}`
 	}))
 
@@ -266,13 +261,13 @@ func main() {
 	app.opt.uhe.Start()
 	app.opt.hlrc.Start()
 	app.opt.lod.Start()
-	// EHS is disabled by default — start via /api/ehs/start or enable Turbo mode
+	app.opt.ehs.Start()
 	app.opt.rpc.Start()
 	app.opt.rhd.Start()
 	app.opt.pvc.Start()
 	w.SetTitle(fmt.Sprintf("Hyperspeed Browser [:%d] Genesis", app.apiPort))
 
-	// Single Init call — all JS merged (navBarJS runs on every document creation)
+	// Single Init call â€” all JS merged (navBarJS runs on every document creation)
 	var initJS strings.Builder
 	initJS.WriteString(fmt.Sprintf(`window.__mbPort=%d;window.__mbToken=%q;window.__mbBase='http://127.0.0.1:'+window.__mbPort;`, app.apiPort, app.apiToken))
 	initJS.WriteString(overlayJS)
@@ -290,7 +285,7 @@ func main() {
 		for {
 			var m runtime.MemStats
 			runtime.ReadMemStats(&m)
-			log.Printf("[MEM] Alloc=%dMB Heap=%dMB Sys=%dMB Stack=%dMB Goroutines=%d WorkingSet≈%dMB",
+			log.Printf("[MEM] Alloc=%dMB Heap=%dMB Sys=%dMB Stack=%dMB Goroutines=%d WorkingSetâ‰ˆ%dMB",
 				m.Alloc/(1024*1024), m.HeapAlloc/(1024*1024), m.Sys/(1024*1024),
 				m.StackInuse/(1024*1024), runtime.NumGoroutine(),
 				(m.Alloc+m.Sys)/(1024*1024))
@@ -391,7 +386,7 @@ nc.appendChild(t);
 setTimeout(function(){if(t.parentNode)t.classList.add('removing');setTimeout(function(){if(t.parentNode)t.remove()},300)},8000);
 }}`
 
-// snapshot JS — returns flat array of actionable DOM nodes with unique IDs
+// snapshot JS â€” returns flat array of actionable DOM nodes with unique IDs
 const snapshotJS = `(function(){
 var nodes=[],uid=0;
 function walk(el,d){
@@ -419,7 +414,7 @@ return nodes;
 // Optimizer GUI loaded via //go:embed optimizer-gui.js
 
 func (b *browser) injectTurboLoop() {
-	// Single attempt — JS guards prevent re-execution
+	// Single attempt â€” JS guards prevent re-execution
 	time.Sleep(100 * time.Millisecond)
 	b.w.Dispatch(func() {
 		b.w.Eval(turboDOM)
@@ -430,11 +425,6 @@ func (b *browser) injectTurboLoop() {
 	time.Sleep(200 * time.Millisecond)
 	if b.opt != nil && b.opt.quick != nil {
 		b.opt.quick.InjectAll()
-	}
-	// Inject Prefetch tracker
-	time.Sleep(100 * time.Millisecond)
-	if b.opt != nil && b.opt.prf != nil && b.opt.prf.enabled {
-		b.w.Dispatch(func() { b.w.Eval(prefetchJS) })
 	}
 }
 
@@ -574,11 +564,6 @@ func (b *browser) startAPI(ready chan<- struct{}) {
 	mux.HandleFunc("/api/hfs/stats", b.handleHFSStats)
 	mux.HandleFunc("/api/rcm/stats", b.handleRCMStats)
 
-	mux.HandleFunc("/api/predict/hover", b.handlePredictHover)
-	mux.HandleFunc("/api/predict/click", b.handlePredictClick)
-	mux.HandleFunc("/api/predict/hit", b.handlePredictHit)
-	mux.HandleFunc("/api/predict/stats", b.handlePredictStats)
-
 	mux.HandleFunc("/api/uhe/start", b.handleUHEStart)
 	mux.HandleFunc("/api/uhe/stats", b.handleUHEStats)
 	mux.HandleFunc("/api/uhe/access", b.handleUHEAccess)
@@ -593,10 +578,10 @@ func (b *browser) startAPI(ready chan<- struct{}) {
 	mux.HandleFunc("/api/hlrc/config", b.handleHLRCConfig)
 
 	b.srv = &http.Server{
-		Handler:        corsMiddleware(authMiddleware(b, mux)),
-		ReadTimeout:    10 * time.Second,
-		WriteTimeout:   30 * time.Second,
-		IdleTimeout:    60 * time.Second,
+		Handler:      corsMiddleware(authMiddleware(b, mux)),
+		ReadTimeout:  10 * time.Second,
+		WriteTimeout: 30 * time.Second,
+		IdleTimeout:  60 * time.Second,
 		MaxHeaderBytes: 1 << 16,
 	}
 	b.srv.Serve(listener)
@@ -707,8 +692,8 @@ func (b *browser) syncExec(js string) {
 	b.w.Dispatch(func() { b.w.Eval(js) })
 }
 
-// syncUnwrapInto eval JS and unmarshal directly into target struct — avoids the
-// json.Marshal→json.Unmarshal double-conversion pattern seen throughout the codebase.
+// syncUnwrapInto eval JS and unmarshal directly into target struct â€” avoids the
+// json.Marshalâ†’json.Unmarshal double-conversion pattern seen throughout the codebase.
 func (b *browser) syncUnwrapInto(js string, timeout time.Duration, target interface{}) error {
 	raw, err := b.syncEval(js, timeout)
 	if err != nil {
@@ -1177,7 +1162,7 @@ func (b *browser) navigate(rawURL string) {
 		b.idx = len(b.history) - 1
 	}
 	b.curr = urlStr
-
+	
 	// Track non-console URLs for resume
 	if urlStr != "hyperspeed://console" {
 		b.lastBrowseURL = urlStr
@@ -1191,14 +1176,6 @@ func (b *browser) navigate(rawURL string) {
 	// Adapt: classify site and disable unnecessary engines
 	if b.opt != nil && b.opt.adapt != nil {
 		b.opt.adapt.OnNavigate(urlStr)
-	}
-
-	// Trigger prefetch JS injection after navigation
-	if b.opt != nil && b.opt.prf != nil && b.opt.prf.enabled {
-		go func() {
-			time.Sleep(600 * time.Millisecond) // wait for page load
-			b.w.Dispatch(func() { b.w.Eval(prefetchJS) })
-		}()
 	}
 
 	b.mu.Unlock()
@@ -1293,9 +1270,9 @@ func (b *browser) handleAutoTuneMetrics(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	var req struct {
-		Domain  string  `json:"domain"`
-		CPU     float64 `json:"cpu"`
-		Memory  float64 `json:"memory"`
+		Domain string  `json:"domain"`
+		CPU    float64 `json:"cpu"`
+		Memory float64 `json:"memory"`
 		Network float64 `json:"network"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -1354,10 +1331,641 @@ func (b *browser) lazyStartEngines() {
 		b.opt.uee.Start,
 		b.opt.hfs.Start,
 		b.opt.rcm.Start,
-		b.opt.prf.Start,
 		b.opt.autotune.Start,
 	}
 	for _, fn := range engines {
 		go fn()
 	}
+}
+//-- adapt.go --
+package main
+
+import (
+	"log"
+	"net/http"
+	"net/url"
+	"strings"
+	"sync"
+)
+
+// SiteType classifies what kind of page the user is on.
+type SiteType int
+
+const (
+	SiteGeneral SiteType = iota
+	SiteSearch
+	SiteCode
+	SiteVideo
+	SiteSocial
+	SiteNews
+	SiteEcommerce
+	SiteEmail
+)
+
+func (s SiteType) String() string {
+	switch s {
+	case SiteSearch:
+		return "search"
+	case SiteCode:
+		return "code"
+	case SiteVideo:
+		return "video"
+	case SiteSocial:
+		return "social"
+	case SiteNews:
+		return "news"
+	case SiteEcommerce:
+		return "ecommerce"
+	case SiteEmail:
+		return "email"
+	default:
+		return "general"
+	}
+}
+
+// Adapt is the intelligent site-aware engine orchestrator.
+type Adapt struct {
+	mu         sync.RWMutex
+	currentURL string
+	siteType   SiteType
+
+	disabled        map[string]bool
+	totalClassified int
+}
+
+// per-site engine blacklists â€” engines that contribute nothing to that site type.
+var siteEngineBlacklist = map[SiteType][]string{
+	SiteSearch: {
+		"dna", "hbm", "avp", "pce", "upm", "ncg", "dra", "mcs", "cbl", "uee", "hfs", "rcm",
+		"lod", "pvc", "rhd", "ehs", "rpc", "crg", "domCompress",
+	},
+	SiteCode: {
+		"avp", "ehs", "rpc", "crg", "pce",
+	},
+	SiteVideo: {
+		"domCompress", "lod", "pvc",
+	},
+	SiteSocial: {
+		"pce", "ncg",
+	},
+	SiteNews: {
+		"pce", "ncg",
+	},
+	SiteEcommerce: {
+		// everything useful
+	},
+	SiteEmail: {
+		"dna", "hbm", "avp", "pce", "upm", "ncg", "dra", "mcs", "cbl", "uee", "hfs", "rcm",
+		"lod", "pvc", "rhd", "ehs", "rpc", "crg", "domCompress", "avp",
+	},
+}
+
+func newAdapt() *Adapt {
+	return &Adapt{
+		disabled: make(map[string]bool),
+	}
+}
+
+func classifySite(rawURL string) SiteType {
+	u, err := url.Parse(rawURL)
+	if err != nil || u.Host == "" {
+		return SiteGeneral
+	}
+	host := strings.ToLower(u.Host)
+
+	// Search engines
+	if strings.Contains(host, "google.") ||
+		strings.Contains(host, "duckduckgo.") ||
+		strings.Contains(host, "bing.") ||
+		strings.Contains(host, "yahoo.") ||
+		strings.Contains(host, "baidu.") ||
+		strings.Contains(host, "yandex.") ||
+		strings.Contains(host, "ecosia.") ||
+		strings.Contains(host, "qwant.") ||
+		host == "search.brave.com" ||
+		host == "www.startpage.com" {
+		return SiteSearch
+	}
+
+	// Code/Dev
+	if strings.Contains(host, "github.") ||
+		strings.Contains(host, "gitlab.") ||
+		strings.Contains(host, "bitbucket.") ||
+		strings.Contains(host, "stackoverflow.") ||
+		strings.Contains(host, "stackexchange.") ||
+		strings.Contains(host, "npmjs.") ||
+		strings.Contains(host, "pypi.") ||
+		strings.Contains(host, "docs.") ||
+		strings.Contains(host, "developer.") ||
+		strings.Contains(host, "codepen.") ||
+		strings.Contains(host, "codesandbox.") ||
+		strings.Contains(host, "replit.") {
+		return SiteCode
+	}
+
+	// Video
+	if strings.Contains(host, "youtube.") ||
+		strings.Contains(host, "youtu.be") ||
+		strings.Contains(host, "twitch.") ||
+		strings.Contains(host, "vimeo.") ||
+		strings.Contains(host, "dailymotion.") ||
+		strings.Contains(host, "netflix.") ||
+		strings.Contains(host, "hulu.") ||
+		strings.Contains(host, "spotify.") ||
+		strings.Contains(host, "tiktok.") {
+		return SiteVideo
+	}
+
+	// Social
+	if strings.Contains(host, "facebook.") ||
+		strings.Contains(host, "twitter.") ||
+		strings.Contains(host, "x.com") ||
+		strings.Contains(host, "reddit.") ||
+		strings.Contains(host, "instagram.") ||
+		strings.Contains(host, "linkedin.") ||
+		strings.Contains(host, "discord.") ||
+		strings.Contains(host, "telegram.") ||
+		strings.Contains(host, "whatsapp.") ||
+		strings.Contains(host, "t.me") {
+		return SiteSocial
+	}
+
+	// News
+	if strings.Contains(host, "news.") ||
+		strings.Contains(host, "cnn.") ||
+		strings.Contains(host, "bbc.") ||
+		strings.Contains(host, "nytimes.") ||
+		strings.Contains(host, "reuters.") ||
+		strings.Contains(host, "bloomberg.") ||
+		strings.Contains(host, "medium.") ||
+		strings.Contains(host, "substack.") {
+		return SiteNews
+	}
+
+	// E-commerce
+	if strings.Contains(host, "amazon.") ||
+		strings.Contains(host, "ebay.") ||
+		strings.Contains(host, "etsy.") ||
+		strings.Contains(host, "shopify.") ||
+		strings.Contains(host, "walmart.") ||
+		strings.Contains(host, "bestbuy.") ||
+		strings.Contains(host, "target.") ||
+		strings.Contains(host, "alibaba.") ||
+		strings.Contains(host, "aliexpress.") ||
+		strings.Contains(host, "shopee.") ||
+		strings.Contains(host, "lazada.") ||
+		strings.Contains(host, "taobao.") ||
+		strings.Contains(host, "tmall.") {
+		return SiteEcommerce
+	}
+
+	// Email
+	if strings.Contains(host, "mail.") ||
+		strings.Contains(host, "gmail.") ||
+		strings.Contains(host, "outlook.") ||
+		strings.Contains(host, "protonmail.") ||
+		strings.Contains(host, "zoho.") ||
+		strings.Contains(host, "fastmail.") ||
+		host == "mail.google.com" {
+		return SiteEmail
+	}
+
+	return SiteGeneral
+}
+
+// OnNavigate classifies a URL and updates the disabled engine set.
+// Returns the new site type.
+func (a *Adapt) OnNavigate(rawURL string) SiteType {
+	rawURL = strings.TrimSpace(rawURL)
+	st := classifySite(rawURL)
+
+	a.mu.Lock()
+	defer a.mu.Unlock()
+
+	a.currentURL = rawURL
+	a.siteType = st
+	a.totalClassified++
+
+	// Rebuild disabled set
+	a.disabled = make(map[string]bool)
+	if blacklist, ok := siteEngineBlacklist[st]; ok {
+		for _, name := range blacklist {
+			a.disabled[name] = true
+		}
+	}
+
+	log.Printf("[ADAPT] site=%s url=%s disabled=%d/%d engines",
+		st, truncate(rawURL, 80), len(a.disabled), len(engineNames))
+
+	return st
+}
+
+func truncate(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	return s[:n] + "..."
+}
+
+// ShouldRun returns true if an engine should execute for the current page.
+func (a *Adapt) ShouldRun(engine string) bool {
+	a.mu.RLock()
+	disabled := a.disabled[engine]
+	a.mu.RUnlock()
+	return !disabled
+}
+
+// Profile returns the current adapt state.
+func (a *Adapt) Profile() map[string]interface{} {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+
+	disabledList := make([]string, 0, len(a.disabled))
+	for name := range a.disabled {
+		disabledList = append(disabledList, name)
+	}
+
+	return map[string]interface{}{
+		"siteType":   a.siteType.String(),
+		"currentURL": a.currentURL,
+		"disabled":   disabledList,
+		"count":      len(disabledList),
+		"classified": a.totalClassified,
+	}
+}
+
+// engineNames is the canonical list of all known engines.
+var engineNames = []string{
+	"hlrc", "uhe", "autotune", "gcCtl",
+	"dna", "hbm", "avp", "domCompress", "ncg", "pce", "upm",
+	"dra", "mcs", "cbl", "uee", "hfs", "rcm",
+	"lod", "pvc", "rhd", "ehs", "rpc", "crg",
+	"qse", "vd", "quick", "netq", "csso", "media", "cache", "tuner",
+}
+
+// ---------------------------------------------------------------------------
+// HTTP handler
+// ---------------------------------------------------------------------------
+
+func (b *browser) handleAdaptStats(w http.ResponseWriter, r *http.Request) {
+	if b.opt == nil || b.opt.adapt == nil {
+		writeError(w, 503, "adapt not initialized")
+		return
+	}
+	writeJSON(w, map[string]interface{}{
+		"ok":      true,
+		"adapt":   b.opt.adapt.Profile(),
+	})
+}
+//-- adapt_test.go --
+package main
+
+import (
+	"testing"
+)
+
+func TestClassifySite(t *testing.T) {
+	tests := []struct {
+		url      string
+		expected SiteType
+	}{
+		// Empty / invalid
+		{"", SiteGeneral},
+		{"not a url", SiteGeneral},
+		{"http://", SiteGeneral},
+
+		// Search
+		{"https://www.google.com/search?q=foo", SiteSearch},
+		{"https://google.com", SiteSearch},
+		{"https://duckduckgo.com/?q=test", SiteSearch},
+		{"https://search.brave.com", SiteSearch},
+		{"https://www.startpage.com", SiteSearch},
+
+		// Email (must be detected before generic search)
+		{"https://mail.google.com", SiteEmail},
+		{"https://outlook.live.com", SiteEmail},
+		{"https://protonmail.com", SiteEmail},
+
+		// Code
+		{"https://github.com/foo", SiteCode},
+		{"https://gitlab.com/foo", SiteCode},
+		{"https://stackoverflow.com/questions", SiteCode},
+
+		// Video
+		{"https://www.youtube.com/watch?v=dQw4w9WgXcQ", SiteVideo},
+		{"https://youtu.be/dQw4w9WgXcQ", SiteVideo},
+		{"https://twitch.tv/lirik", SiteVideo},
+		{"https://www.tiktok.com/@user", SiteVideo},
+
+		// Social
+		{"https://www.facebook.com", SiteSocial},
+		{"https://x.com/elonmusk", SiteSocial},
+		{"https://twitter.com/elonmusk", SiteSocial},
+		{"https://t.me/durov", SiteSocial},
+
+		// News
+		{"https://www.cnn.com", SiteNews},
+		{"https://www.bbc.com/news", SiteNews},
+		{"https://medium.com/@user", SiteNews},
+
+		// Ecommerce
+		{"https://www.amazon.com/dp/B08N5WRWNW", SiteEcommerce},
+		{"https://www.ebay.com", SiteEcommerce},
+		{"https://shopee.com", SiteEcommerce},
+
+		// General (fallback)
+		{"https://example.com", SiteGeneral},
+		{"https://myblog.org", SiteGeneral},
+	}
+	for _, tt := range tests {
+		t.Run(tt.url, func(t *testing.T) {
+			result := classifySite(tt.url)
+			if result != tt.expected {
+				t.Errorf("classifySite(%q) = %s, want %s", tt.url, result, tt.expected)
+			}
+		})
+	}
+}
+
+func TestAdaptOnNavigateAndShouldRun(t *testing.T) {
+	a := NewAdapt()
+
+	st := a.OnNavigate("https://google.com/search")
+	if st != SiteSearch {
+		t.Fatalf("expected SiteSearch, got %s", st)
+	}
+	if a.ShouldRun("dna") {
+		t.Error("dna should be disabled on search")
+	}
+	if !a.ShouldRun("hlrc") {
+		t.Error("hlrc should be enabled on search")
+	}
+
+	a.OnNavigate("https://github.com/golang/go")
+	if a.ShouldRun("avp") {
+		t.Error("avp should be disabled on code")
+	}
+	if !a.ShouldRun("domCompress") {
+		t.Error("domCompress should be enabled on code")
+	}
+
+	a.OnNavigate("https://example.com")
+	if !a.ShouldRun("dna") {
+		t.Error("no engine should be disabled on general")
+	}
+	if cnt := len(a.Profile()["disabled"].([]string)); cnt != 0 {
+		t.Errorf("expected 0 disabled, got %d", cnt)
+	}
+}
+
+func TestAdaptProfile(t *testing.T) {
+	a := NewAdapt()
+	a.OnNavigate("https://mail.google.com")
+	profile := a.Profile()
+	if profile["siteType"] != "email" {
+		t.Errorf("expected email, got %s", profile["siteType"])
+	}
+	disabled := profile["disabled"].([]string)
+	if len(disabled) == 0 {
+		t.Error("expected some engines disabled on email")
+	}
+}
+
+func TestAdaptSameTypeNoRebuild(t *testing.T) {
+	a := NewAdapt()
+	a.OnNavigate("https://google.com")
+	firstCnt := len(a.Profile()["disabled"].([]string))
+	a.OnNavigate("https://www.bing.com")
+	secondCnt := len(a.Profile()["disabled"].([]string))
+	if firstCnt != secondCnt {
+		t.Errorf("disabled set size changed from %d to %d without type change", firstCnt, secondCnt)
+	}
+	if a.Profile()["classified"].(int) != 2 {
+		t.Error("classified count should be 2")
+	}
+}
+//-- rpc.go --
+package main
+
+import (
+	"net/http"
+	"sync"
+	"time"
+)
+
+type RPCEngine struct {
+	b       *browser
+	mu      sync.Mutex
+	enabled bool
+	stats   RPCStats
+}
+
+type RPCStats struct {
+	Entries    int            `json:"entries"`
+	Hits       int            `json:"hits"`
+	Misses     int            `json:"misses"`
+	Evicted    int            `json:"evicted"`
+	HitRate    string         `json:"hitRate"`
+	MemorySaved string        `json:"memorySaved"`
+	Genomes    int            `json:"genomes"`
+	TopDomain  string         `json:"topDomain"`
+	Status     string         `json:"status"`
+}
+
+const rpcJS = `(function(){
+if(window.__mbRPC)return;
+var RPC=window.__mbRPC={
+store:{},genomes:{},hits:0,misses:0,evicted:0,uid:0,
+init:function(){
+var T=this;
+try{var s=localStorage.getItem('__rpc_genomes');if(s)T.genomes=JSON.parse(s);}catch(e){}
+try{var c=localStorage.getItem('__rpc_store');if(c)T.store=JSON.parse(c);}catch(e){}
+T._save();
+setInterval(function(){T._decay();},60000);
+},
+_save:function(){
+try{localStorage.setItem('__rpc_genomes',JSON.stringify(RPC.genomes));}catch(e){}
+try{
+var s={};
+Object.keys(RPC.store).forEach(function(k){
+if(RPC.store[k].score>1)s[k]=RPC.store[k];});
+localStorage.setItem('__rpc_store',JSON.stringify(s));
+}catch(e){}
+},
+_track:function(url,type,size){
+if(!url)return;
+var key=url.split('?')[0].split('#')[0];
+var domain=(key.split('/')[2]||'unknown').replace('www.','');
+var ext=key.split('.').pop().toLowerCase();
+var now=Date.now();
+if(!RPC.store[key]){
+RPC.store[key]={
+url:key,domain:domain,type:type||'other',ext:ext,
+size:size||0,hits:0,misses:0,score:10,firstSeen:now,lastSeen:now
+};
+}
+var e=RPC.store[key];
+e.lastSeen=now;
+e.hits++;
+e.score=Math.min(200,e.score+5);
+RPC.hits++;
+RPC._updateGenome(domain,ext,type);
+},
+_miss:function(url){
+var key=url.split('?')[0].split('#')[0];
+if(RPC.store[key]){RPC.store[key].misses++;RPC.store[key].score=Math.max(0,RPC.store[key].score-3);}
+RPC.misses++;
+},
+_updateGenome:function(domain,ext,type){
+if(!RPC.genomes[domain]){
+RPC.genomes[domain]={hits:0,types:{},exts:{},navs:0,lastVisit:Date.now()};}
+var g=RPC.genomes[domain];
+g.hits++;
+g.lastVisit=Date.now();
+g.types[type]=(g.types[type]||0)+1;
+g.exts[ext]=(g.exts[ext]||0)+1;
+g.navs+=g.hits>1?2:1;
+},
+_decay:function(){
+var now=Date.now();
+Object.keys(RPC.store).forEach(function(k){
+var e=RPC.store[k];
+var inactive=(now-e.lastSeen)/1000;
+e.score=Math.max(1,e.score-inactive*0.5);
+var memCost=e.size||1;
+var evictScore=e.score/memCost;
+if(evictScore<0.001&&inactive>120){
+delete RPC.store[k];RPC.evicted++;return;}
+if(inactive>3600){delete RPC.store[k];RPC.evicted++;}
+});
+RPC._save();
+},
+_genomeScore:function(domain,type){
+var g=RPC.genomes[domain];
+if(!g)return 50;
+return((g.types[type]||0)*10)+(g.hits||0);
+},
+_predict:function(url){
+var domain=(url.split('/')[2]||'').replace('www.','');
+var ext=url.split('.').pop().toLowerCase();
+var g=RPC.genomes[domain];
+if(!g)return{score:10,reason:'new_domain'};
+var typeScore=0;
+Object.keys(g.types).forEach(function(t){typeScore+=g.types[t];});
+var extScore=(g.exts[ext]||0)*20;
+var navScore=Math.min(g.navs||0,200);
+var total=Math.min(200,typeScore+extScore+navScore);
+return{score:Math.max(5,total),reason:total>100?'high_confidence':'medium'};
+},
+stats:function(){
+var T=RPC;
+var total=Object.keys(T.store).length;
+var tot=T.hits+T.misses;
+var hitRate=tot>0?Math.round(T.hits/tot*100)+'%':'0%';
+var mem=T.evicted*50+'KB';
+var domains=Object.keys(T.genomes);
+var top='';
+if(domains.length){top=domains.sort(function(a,b){return T.genomes[b].hits-T.genomes[a].hits;})[0];}
+return{entries:total,hits:T.hits,misses:T.misses,evicted:T.evicted,hitRate:hitRate,memorySaved:mem,genomes:domains.length,topDomain:top,status:'ok'};
+}
+};
+RPC.init();
+// Hook fetch
+var _fetch=window.fetch;
+window.fetch=function(u,o){
+var url=typeof u==='string'?u:u&&u.url?u.url:'';
+var start=Date.now();
+RPC._track(url,'fetch',0);
+return _fetch.call(this,u,o).then(function(r){
+var cl=r.headers.get('content-length');
+var size=cl?parseInt(cl):0;
+if(r.ok&&size>0)RPC.store[url.split('?')[0]]&&(RPC.store[url.split('?')[0]].size=size);
+return r;})["catch"](function(err){RPC._miss(url);throw err;});
+};
+// Hook Image - save original descriptor first
+var _imgDesc=Object.getOwnPropertyDescriptor(Image.prototype,'src');
+var _imgSet=_imgDesc&&_imgDesc.set;
+Object.defineProperty(Image.prototype,'src',{
+get:function(){return this._rpc_src||'';},
+set:function(v){
+this._rpc_src=v;
+var url=v||'';
+RPC._track(url,'image',0);
+if(_imgSet)_imgSet.call(this,v);
+},
+configurable:true
+});
+// Hook XHR
+var _XHRO=XMLHttpRequest.prototype.open;
+XMLHttpRequest.prototype.open=function(m,u,a){
+this._rpc_url=u;
+RPC._track(u,'xhr',0);
+return _XHRO.apply(this,arguments);
+};
+// Hook Link prefetch/preload
+document.addEventListener('DOMContentLoaded',function(){
+document.querySelectorAll('link[rel="prefetch"],link[rel="preload"],link[rel="preconnect"]').forEach(function(ln){
+var href=ln.getAttribute('href');
+if(href)RPC._track(href,ln.getAttribute('as')||'link',0);
+});
+});
+// Hook navigation for genome
+var _ps=history.pushState;
+history.pushState=function(){
+var domain=location.hostname.replace('www.','');
+if(RPC.genomes[domain])RPC.genomes[domain].navs=(RPC.genomes[domain].navs||0)+1;
+return _ps.apply(this,arguments);
+};
+window.addEventListener('popstate',function(){
+var domain=location.hostname.replace('www.','');
+if(RPC.genomes[domain])RPC.genomes[domain].navs=(RPC.genomes[domain].navs||0)+1;
+});
+console.log('%c[RPC] Revisit Probability Cache active','color:#66bb6a;font-size:11px');
+console.log('[RPC] '+Object.keys(RPC.genomes).length+' genomes loaded');
+})()`
+
+var rpcGatherJS = "(function(){var s=window.__mbRPC;if(!s)return{entries:0,hits:0,misses:0,evicted:0,hitRate:'0%',memorySaved:'0',genomes:0,topDomain:'',status:'n/a'};return s.stats();})()"
+
+var rpcGenomeJS = "(function(){var R=window.__mbRPC;if(!R)return;var g=R.genomes[(location.hostname||'').replace('www.','')];if(!g)return;console.log('[RPC] genome loaded:',Object.keys(g.types).length,'types,',g.hits,'hits');})()"
+
+func NewRPCEngine(b *browser) *RPCEngine {
+	return &RPCEngine{b: b, enabled: true}
+}
+
+func (r *RPCEngine) Start() {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if !r.enabled {
+		return
+	}
+	r.b.syncExec(rpcJS)
+}
+
+func (r *RPCEngine) Gather() *RPCStats {
+	var s RPCStats
+	if err := r.b.syncUnwrapInto(rpcGatherJS, 5*time.Second, &s); err != nil {
+		return &r.stats
+	}
+	r.mu.Lock()
+	r.stats = s
+	r.mu.Unlock()
+	return &s
+}
+
+func (b *browser) handleRPCStart(w http.ResponseWriter, r *http.Request) {
+	if b.opt == nil || b.opt.rpc == nil {
+		writeError(w, 503, "RPC not init")
+		return
+	}
+	b.opt.rpc.Start()
+	writeJSON(w, map[string]interface{}{"ok": true, "msg": "RPC cache engine started"})
+}
+
+func (b *browser) handleRPCStats(w http.ResponseWriter, r *http.Request) {
+	if b.opt == nil || b.opt.rpc == nil {
+		writeError(w, 503, "RPC not init")
+		return
+	}
+	s := b.opt.rpc.Gather()
+	writeJSON(w, map[string]interface{}{"ok": true, "stats": s})
 }

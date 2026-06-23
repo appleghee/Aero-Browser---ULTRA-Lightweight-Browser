@@ -9,21 +9,21 @@ import (
 )
 
 type DNAEngine struct {
-	b       *browser
-	mu      sync.Mutex
-	enabled bool
-	stats   DNAStats
+	b            *browser
+	mu           sync.Mutex
+	enabled      bool
+	stats        DNAStats
 	fingerprints map[string]*PageDNA
 }
 
 type PageDNA struct {
-	Domain        string   `json:"domain"`
-	ColorScheme   string   `json:"colorScheme"`
-	LayoutPattern string   `json:"layoutPattern"`
-	Interactives  []string `json:"interactives"`
-	Scripts       []string `json:"scripts"`
-	Fonts         []string `json:"fonts"`
-	AvgDOMDepth   float64  `json:"avgDOMDepth"`
+	Domain        string    `json:"domain"`
+	ColorScheme   string    `json:"colorScheme"`
+	LayoutPattern string    `json:"layoutPattern"`
+	Interactives  []string  `json:"interactives"`
+	Scripts       []string  `json:"scripts"`
+	Fonts         []string  `json:"fonts"`
+	AvgDOMDepth   float64   `json:"avgDOMDepth"`
 	LastSeen      time.Time `json:"-"`
 }
 

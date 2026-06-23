@@ -19,11 +19,11 @@ type DOMCompressEngine struct {
 }
 
 type DOMCompressStats struct {
-	LastSize    int     `json:"lastSize"`
-	Compressed  int     `json:"compressed"`
-	Ratio       string  `json:"ratio"`
-	Nodes       int     `json:"nodes"`
-	Status      string  `json:"status"`
+	LastSize   int    `json:"lastSize"`
+	Compressed int    `json:"compressed"`
+	Ratio      string `json:"ratio"`
+	Nodes      int    `json:"nodes"`
+	Status     string `json:"status"`
 }
 
 const domCompressGatherJS = `(function(){

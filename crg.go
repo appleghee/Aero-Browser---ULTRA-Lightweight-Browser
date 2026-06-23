@@ -104,12 +104,12 @@ return{stored:count,reused:saved,cacheSize:Object.keys(cache).length};
 }
 
 type CRGEngine struct {
-	b       *browser
-	mu      sync.Mutex
-	enabled bool
-	graph   []CRGNode
-	stats   CRGStats
-	crgCache map[string]crgCacheEntry
+	b         *browser
+	mu        sync.Mutex
+	enabled   bool
+	graph     []CRGNode
+	stats     CRGStats
+	crgCache  map[string]crgCacheEntry
 	hitCount  int
 	missCount int
 }
@@ -124,10 +124,10 @@ func NewCRGEngine(b *browser) *CRGEngine {
 
 func (c *CRGEngine) Scan() (*CRGStats, error) {
 	var raw struct {
-		Nodes   []CRGNode `json:"nodes"`
-		Time    int       `json:"scanTime"`
-		Memory  float64   `json:"memory"`
-		Total   int       `json:"total"`
+		Nodes  []CRGNode `json:"nodes"`
+		Time   int       `json:"scanTime"`
+		Memory float64   `json:"memory"`
+		Total  int       `json:"total"`
 	}
 	if err := c.b.syncUnwrapInto(crgScanJS, 15*time.Second, &raw); err != nil {
 		return nil, fmt.Errorf("crg scan failed: %w", err)

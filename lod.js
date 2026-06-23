@@ -61,15 +61,15 @@ var ol=this.levels[id];if(nl===ol)return;
 this._apply(id,nl);
 },
 _classify:function(){
-var vh=window.innerHeight;
-for(var id in this.levels){
-var r=this.rects[id];if(!r)continue;
+var vh=window.innerHeight,T=this;
+Object.keys(this.levels).forEach(function(id){
+var r=T.rects[id];if(!r)continue;
 if(!r.t&&r.hi)continue;
 var dist=Math.abs(r.t+r.h/2-vh/2)/Math.max(vh,1);
 var nl=dist<1.5?0:dist<4?1:dist<8?2:3;
-var ol=this.levels[id];if(nl===ol)continue;
-this._apply(id,nl);
-}
+var ol=T.levels[id];if(nl===ol)continue;
+T._apply(id,nl);
+});
 },
 _apply:function(id,lv){
 var el=document.querySelector('[data-lod-id="'+id+'"]');

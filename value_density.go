@@ -175,7 +175,7 @@ func memoryBudget() float64 {
 	}
 	var m runtime.MemStats
 	runtime.ReadMemStats(&m)
-	totalGB := float64(m.TotalAlloc) / 1024 / 1024 / 1024
+	totalGB := float64(m.Alloc) / 1024 / 1024 / 1024
 	if totalGB < 1 {
 		mbCacheVal = 200
 	} else {

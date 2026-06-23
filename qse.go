@@ -9,38 +9,38 @@ import (
 )
 
 type QSEEngine struct {
-	b       *browser
-	mu      sync.RWMutex
-	enabled bool
+	b         *browser
+	mu        sync.RWMutex
+	enabled   bool
 	shortcuts map[string]string
 	clickHeat map[string]int
-	stats    QSEStats
+	stats     QSEStats
 }
 
 type QSEStats struct {
-	Shortcuts   int    `json:"shortcuts"`
-	Resolved    int    `json:"resolved"`
-	ClickHeat   int    `json:"clickHeat"`
-	TopDomain   string `json:"topDomain"`
-	Status      string `json:"status"`
+	Shortcuts int    `json:"shortcuts"`
+	Resolved  int    `json:"resolved"`
+	ClickHeat int    `json:"clickHeat"`
+	TopDomain string `json:"topDomain"`
+	Status    string `json:"status"`
 }
 
 var defaultShortcuts = map[string]string{
-	"yt":    "https://youtube.com/results?search_query=%s",
-	"gh":    "https://github.com/search?q=%s",
-	"w":     "https://en.wikipedia.org/wiki/%s",
-	"g":     "https://www.google.com/search?q=%s",
+	"yt":     "https://youtube.com/results?search_query=%s",
+	"gh":     "https://github.com/search?q=%s",
+	"w":      "https://en.wikipedia.org/wiki/%s",
+	"g":      "https://www.google.com/search?q=%s",
 	"reddit": "https://www.reddit.com/search/?q=%s",
-	"tw":    "https://twitter.com/search?q=%s",
-	"x":     "https://x.com/search?q=%s",
-	"amz":   "https://www.amazon.com/s?k=%s",
-	"so":    "https://stackoverflow.com/search?q=%s",
-	"maps": "https://www.google.com/maps/search/%s",
-	"img":   "https://www.google.com/search?tbm=isch&q=%s",
-	"news":  "https://news.google.com/search?q=%s",
-	"npm":   "https://www.npmjs.com/search?q=%s",
-	"pypi":  "https://pypi.org/search/?q=%s",
-	"wiki":  "https://en.wikipedia.org/wiki/%s",
+	"tw":     "https://twitter.com/search?q=%s",
+	"x":      "https://x.com/search?q=%s",
+	"amz":    "https://www.amazon.com/s?k=%s",
+	"so":     "https://stackoverflow.com/search?q=%s",
+	"maps":   "https://www.google.com/maps/search/%s",
+	"img":    "https://www.google.com/search?tbm=isch&q=%s",
+	"news":   "https://news.google.com/search?q=%s",
+	"npm":    "https://www.npmjs.com/search?q=%s",
+	"pypi":   "https://pypi.org/search/?q=%s",
+	"wiki":   "https://en.wikipedia.org/wiki/%s",
 }
 
 const qseClickHeatJS = `(function(){
@@ -157,8 +157,8 @@ func (b *browser) handleQSEAdd(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req struct {
-		Key  string `json:"key"`
-		URL  string `json:"url"`
+		Key string `json:"key"`
+		URL string `json:"url"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, 400, "bad request")

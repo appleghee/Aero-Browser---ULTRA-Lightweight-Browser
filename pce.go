@@ -19,10 +19,10 @@ type PCEEngine struct {
 }
 
 type PCEStats struct {
-	Batched    int    `json:"batched"`
-	Flushed    int    `json:"flushed"`
-	AvgBatch   int    `json:"avgBatch"`
-	Status     string `json:"status"`
+	Batched  int    `json:"batched"`
+	Flushed  int    `json:"flushed"`
+	AvgBatch int    `json:"avgBatch"`
+	Status   string `json:"status"`
 }
 
 const pceGatherJS = `(function(){var s=window.__mbPCE;if(!s)return{batched:0,flushed:0,avgBatch:0,status:'n/a'};return{batched:s._batched||0,flushed:s._flushed||0,avgBatch:s._batched>0?Math.round(s._flushed/s._batched):0,status:'ok'};})()`

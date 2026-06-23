@@ -23,9 +23,9 @@ type DRAEngine struct {
 }
 
 type DRAStats struct {
-	Throttled   int    `json:"throttled"`
-	Budget      string `json:"budget"`
-	Status      string `json:"status"`
+	Throttled int    `json:"throttled"`
+	Budget    string `json:"budget"`
+	Status    string `json:"status"`
 }
 
 const draGatherJS = `(function(){var s=window.__mbDRA;if(!s)return{throttled:0,budget:'100%',status:'n/a'};return{throttled:s._throttled||0,budget:Math.round((s._budget||100))+'%',status:'ok'};})()`
@@ -37,13 +37,17 @@ func NewDRAEngine(b *browser) *DRAEngine {
 func (d *DRAEngine) Start() {
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	if !d.enabled { return }
+	if !d.enabled {
+		return
+	}
 	d.b.syncExec(draJS)
 }
 
 func (d *DRAEngine) Gather() *DRAStats {
 	var s DRAStats
-	if err := d.b.syncUnwrapInto(draGatherJS, 5*time.Second, &s); err != nil { return &d.stats }
+	if err := d.b.syncUnwrapInto(draGatherJS, 5*time.Second, &s); err != nil {
+		return &d.stats
+	}
 	d.mu.Lock()
 	d.stats = s
 	d.mu.Unlock()
@@ -79,13 +83,17 @@ func NewMCSEngine(b *browser) *MCSEngine {
 func (m *MCSEngine) Start() {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if !m.enabled { return }
+	if !m.enabled {
+		return
+	}
 	m.b.syncExec(mcsJS)
 }
 
 func (m *MCSEngine) Gather() *MCSStats {
 	var s MCSStats
-	if err := m.b.syncUnwrapInto(mcsGatherJS, 5*time.Second, &s); err != nil { return &m.stats }
+	if err := m.b.syncUnwrapInto(mcsGatherJS, 5*time.Second, &s); err != nil {
+		return &m.stats
+	}
 	m.mu.Lock()
 	m.stats = s
 	m.mu.Unlock()
@@ -107,9 +115,9 @@ type CBLEngine struct {
 }
 
 type CBLStats struct {
-	Deferred  int    `json:"deferred"`
-	Prioritized int  `json:"prioritized"`
-	Status    string `json:"status"`
+	Deferred    int    `json:"deferred"`
+	Prioritized int    `json:"prioritized"`
+	Status      string `json:"status"`
 }
 
 const cblGatherJS = `(function(){var s=window.__mbCBL;if(!s)return{deferred:0,prioritized:0,status:'n/a'};return{deferred:s._def||0,prioritized:s._pri||0,status:'ok'};})()`
@@ -121,13 +129,17 @@ func NewCBLEngine(b *browser) *CBLEngine {
 func (c *CBLEngine) Start() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if !c.enabled { return }
+	if !c.enabled {
+		return
+	}
 	c.b.syncExec(cblJS)
 }
 
 func (c *CBLEngine) Gather() *CBLStats {
 	var s CBLStats
-	if err := c.b.syncUnwrapInto(cblGatherJS, 5*time.Second, &s); err != nil { return &c.stats }
+	if err := c.b.syncUnwrapInto(cblGatherJS, 5*time.Second, &s); err != nil {
+		return &c.stats
+	}
 	c.mu.Lock()
 	c.stats = s
 	c.mu.Unlock()
@@ -163,13 +175,17 @@ func NewUEEEngine(b *browser) *UEEEngine {
 func (u *UEEEngine) Start() {
 	u.mu.Lock()
 	defer u.mu.Unlock()
-	if !u.enabled { return }
+	if !u.enabled {
+		return
+	}
 	u.b.syncExec(ueeJS)
 }
 
 func (u *UEEEngine) Gather() *UEEStats {
 	var s UEEStats
-	if err := u.b.syncUnwrapInto(ueeGatherJS, 5*time.Second, &s); err != nil { return &u.stats }
+	if err := u.b.syncUnwrapInto(ueeGatherJS, 5*time.Second, &s); err != nil {
+		return &u.stats
+	}
 	u.mu.Lock()
 	u.stats = s
 	u.mu.Unlock()
@@ -191,9 +207,9 @@ type HFSEngine struct {
 }
 
 type HFSStats struct {
-	HotFiles  int    `json:"hotFiles"`
-	Cached    int    `json:"cached"`
-	Status    string `json:"status"`
+	HotFiles int    `json:"hotFiles"`
+	Cached   int    `json:"cached"`
+	Status   string `json:"status"`
 }
 
 const hfsGatherJS = `(function(){var s=window.__mbHFS;if(!s)return{hotFiles:0,cached:0,status:'n/a'};return{hotFiles:s._hot||0,cached:Object.keys(s._store||{}).length,status:'ok'};})()`
@@ -205,13 +221,17 @@ func NewHFSEngine(b *browser) *HFSEngine {
 func (h *HFSEngine) Start() {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	if !h.enabled { return }
+	if !h.enabled {
+		return
+	}
 	h.b.syncExec(hfsJS)
 }
 
 func (h *HFSEngine) Gather() *HFSStats {
 	var s HFSStats
-	if err := h.b.syncUnwrapInto(hfsGatherJS, 5*time.Second, &s); err != nil { return &h.stats }
+	if err := h.b.syncUnwrapInto(hfsGatherJS, 5*time.Second, &s); err != nil {
+		return &h.stats
+	}
 	h.mu.Lock()
 	h.stats = s
 	h.mu.Unlock()
@@ -247,13 +267,17 @@ func NewRCMEngine(b *browser) *RCMEngine {
 func (r *RCMEngine) Start() {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if !r.enabled { return }
+	if !r.enabled {
+		return
+	}
 	r.b.syncExec(rcmJS)
 }
 
 func (r *RCMEngine) Gather() *RCMStats {
 	var s RCMStats
-	if err := r.b.syncUnwrapInto(rcmGatherJS, 5*time.Second, &s); err != nil { return &r.stats }
+	if err := r.b.syncUnwrapInto(rcmGatherJS, 5*time.Second, &s); err != nil {
+		return &r.stats
+	}
 	r.mu.Lock()
 	r.stats = s
 	r.mu.Unlock()
@@ -265,31 +289,49 @@ func (r *RCMEngine) Gather() *RCMStats {
 // =========================================================================
 
 func (b *browser) handleDRAStats(w http.ResponseWriter, r *http.Request) {
-	if b.opt == nil || b.opt.dra == nil { writeError(w, 503, "DRA not init"); return }
+	if b.opt == nil || b.opt.dra == nil {
+		writeError(w, 503, "DRA not init")
+		return
+	}
 	writeJSON(w, map[string]interface{}{"ok": true, "stats": b.opt.dra.Gather()})
 }
 
 func (b *browser) handleMCSStats(w http.ResponseWriter, r *http.Request) {
-	if b.opt == nil || b.opt.mcs == nil { writeError(w, 503, "MCS not init"); return }
+	if b.opt == nil || b.opt.mcs == nil {
+		writeError(w, 503, "MCS not init")
+		return
+	}
 	writeJSON(w, map[string]interface{}{"ok": true, "stats": b.opt.mcs.Gather()})
 }
 
 func (b *browser) handleCBLStats(w http.ResponseWriter, r *http.Request) {
-	if b.opt == nil || b.opt.cbl == nil { writeError(w, 503, "CBL not init"); return }
+	if b.opt == nil || b.opt.cbl == nil {
+		writeError(w, 503, "CBL not init")
+		return
+	}
 	writeJSON(w, map[string]interface{}{"ok": true, "stats": b.opt.cbl.Gather()})
 }
 
 func (b *browser) handleUEEStats(w http.ResponseWriter, r *http.Request) {
-	if b.opt == nil || b.opt.uee == nil { writeError(w, 503, "UEE not init"); return }
+	if b.opt == nil || b.opt.uee == nil {
+		writeError(w, 503, "UEE not init")
+		return
+	}
 	writeJSON(w, map[string]interface{}{"ok": true, "stats": b.opt.uee.Gather()})
 }
 
 func (b *browser) handleHFSStats(w http.ResponseWriter, r *http.Request) {
-	if b.opt == nil || b.opt.hfs == nil { writeError(w, 503, "HFS not init"); return }
+	if b.opt == nil || b.opt.hfs == nil {
+		writeError(w, 503, "HFS not init")
+		return
+	}
 	writeJSON(w, map[string]interface{}{"ok": true, "stats": b.opt.hfs.Gather()})
 }
 
 func (b *browser) handleRCMStats(w http.ResponseWriter, r *http.Request) {
-	if b.opt == nil || b.opt.rcm == nil { writeError(w, 503, "RCM not init"); return }
+	if b.opt == nil || b.opt.rcm == nil {
+		writeError(w, 503, "RCM not init")
+		return
+	}
 	writeJSON(w, map[string]interface{}{"ok": true, "stats": b.opt.rcm.Gather()})
 }

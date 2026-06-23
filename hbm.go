@@ -11,13 +11,13 @@ import (
 )
 
 type HBMEngine struct {
-	b       *browser
-	mu      sync.Mutex
-	enabled bool
-	stats   HBMStats
-	hotPool int64
+	b        *browser
+	mu       sync.Mutex
+	enabled  bool
+	stats    HBMStats
+	hotPool  int64
 	coolPool int64
-	stopCh  chan struct{}
+	stopCh   chan struct{}
 }
 
 type HBMStats struct {

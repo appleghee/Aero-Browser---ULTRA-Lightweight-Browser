@@ -36,18 +36,18 @@ type UHEngine struct {
 }
 
 type UHEStats struct {
-	Total   int                `json:"total"`
-	Hot     int                `json:"hot"`
-	Warm    int                `json:"warm"`
-	Cool    int                `json:"cool"`
-	Dom     int                `json:"dom"`
-	Script  int                `json:"script"`
-	Cache   int                `json:"cache"`
-	Network int                `json:"network"`
-	Image   int                `json:"image"`
-	Tab     int                `json:"tab"`
-	Top5    []HeatSummary      `json:"top5"`
-	Status  string             `json:"status"`
+	Total   int           `json:"total"`
+	Hot     int           `json:"hot"`
+	Warm    int           `json:"warm"`
+	Cool    int           `json:"cool"`
+	Dom     int           `json:"dom"`
+	Script  int           `json:"script"`
+	Cache   int           `json:"cache"`
+	Network int           `json:"network"`
+	Image   int           `json:"image"`
+	Tab     int           `json:"tab"`
+	Top5    []HeatSummary `json:"top5"`
+	Status  string        `json:"status"`
 }
 
 type HeatSummary struct {
@@ -69,7 +69,7 @@ func NewUHEngine() *UHEngine {
 	}
 }
 
-func (u *UHEngine) SetHLRC(h *HLRC) { u.hlrc = h }
+func (u *UHEngine) SetHLRC(h *HLRC)        { u.hlrc = h }
 func (u *UHEngine) SetOptRef(o *Optimizer) { u.optRef = o }
 
 func (u *UHEngine) Start() {
@@ -225,37 +225,43 @@ func (u *UHEngine) TopN(n int) []HeatEntry {
 }
 
 func (u *UHEngine) evictColdest(n int) {
-	var keys []string
 	now := time.Now()
+	type kv struct {
+		k string
+		e *HeatEntry
+	}
+	var all []kv
 	for k, e := range u.entries {
-		if now.Sub(e.LastAccess) > 10*time.Minute && e.Heat < u.coolThresh {
-			keys = append(keys, k)
+		all = append(all, kv{k, e})
+	}
+	// Sort by LastAccess ascending, then by Heat ascending
+	sort.Slice(all, func(i, j int) bool {
+		if !all[i].e.LastAccess.Equal(all[j].e.LastAccess) {
+			return all[i].e.LastAccess.Before(all[j].e.LastAccess)
+		}
+		return all[i].e.Heat < all[j].e.Heat
+	})
+	// Prefer cold + old entries first, collect up to n
+	var keys []string
+	for _, kv := range all {
+		if now.Sub(kv.e.LastAccess) > 10*time.Minute && kv.e.Heat < u.coolThresh {
+			keys = append(keys, kv.k)
 			if len(keys) >= n {
 				break
 			}
 		}
 	}
+	// Fallback: take oldest n regardless of heat
 	if len(keys) < n {
-		// Fallback: evict oldest entries regardless of heat
-		oldest := make([]string, 0)
-		for k, e := range u.entries {
-			if len(oldest) < n {
-				oldest = append(oldest, k)
-			} else {
-				// Simple replacement: scan again for older
-				for i, ok := range oldest {
-					if e.LastAccess.Before(u.entries[ok].LastAccess) {
-						oldest[i] = k
-						break
-					}
-				}
-			}
+		limit := n
+		if limit > len(all) {
+			limit = len(all)
 		}
-		for _, k := range oldest {
+		for i := 0; i < limit; i++ {
 			if len(keys) >= n {
 				break
 			}
-			keys = append(keys, k)
+			keys = append(keys, all[i].k)
 		}
 	}
 	for _, k := range keys {

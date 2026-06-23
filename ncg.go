@@ -9,28 +9,28 @@ import (
 )
 
 type NCGEngine struct {
-	b       *browser
-	mu      sync.Mutex
-	enabled bool
-	stats   NCGStats
-	costs   map[string]*NCGEntry
+	b          *browser
+	mu         sync.Mutex
+	enabled    bool
+	stats      NCGStats
+	costs      map[string]*NCGEntry
 	maxDomains int
 }
 
 type NCGEntry struct {
-	Domain    string
-	TotalSize int64
-	Requests  int
+	Domain     string
+	TotalSize  int64
+	Requests   int
 	AvgLatency time.Duration
-	LastSeen  time.Time
+	LastSeen   time.Time
 }
 
 type NCGStats struct {
-	Tracked   int     `json:"tracked"`
-	TotalSize int64   `json:"totalSizeKB"`
-	TotalReqs int     `json:"totalReqs"`
-	TopDomain string  `json:"topDomain"`
-	Status    string  `json:"status"`
+	Tracked   int    `json:"tracked"`
+	TotalSize int64  `json:"totalSizeKB"`
+	TotalReqs int    `json:"totalReqs"`
+	TopDomain string `json:"topDomain"`
+	Status    string `json:"status"`
 }
 
 func NewNCGEngine(b *browser) *NCGEngine {

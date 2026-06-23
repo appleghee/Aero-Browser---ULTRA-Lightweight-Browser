@@ -25,41 +25,42 @@ type Optimizer struct {
 	enabled bool
 	profile OptimizerProfile
 
-	metrics    *MetricsCollector
-	csso       *CSSJSOptimizer
-	media      *MediaOptimizer
-	netq       *NetworkQueue
-	cache      *SmartCache
-	tuner      *AutoTuner
-	vd         *ValueDensityEngine
-	crg        *CRGEngine
-	quick      *QuickOptEngine
-	rhd        *RHDGCEngine
-	pvc        *PVCEngine
-	ehs        *EHSEngine
-	rpc        *RPCEngine
-	qse        *QSEEngine
-	lod        *LODEngine
-	uhe        *UHEngine
-	ndf        *NDFCache
-	autotune   *AutoTuneUHE
-	gcctl      *AdaptiveGCController
-	hlrc       *HLRC
+	metrics  *MetricsCollector
+	csso     *CSSJSOptimizer
+	media    *MediaOptimizer
+	netq     *NetworkQueue
+	cache    *SmartCache
+	tuner    *AutoTuner
+	vd       *ValueDensityEngine
+	crg      *CRGEngine
+	quick    *QuickOptEngine
+	rhd      *RHDGCEngine
+	pvc      *PVCEngine
+	ehs      *EHSEngine
+	rpc      *RPCEngine
+	qse      *QSEEngine
+	lod      *LODEngine
+	uhe      *UHEngine
+	ndf      *NDFCache
+	autotune *AutoTuneUHE
+	gcctl    *AdaptiveGCController
+	hlrc     *HLRC
 
 	// v3.2.0 Genesis engines
-	dna        *DNAEngine
-	hbm        *HBMEngine
-	avp        *AVPEngine
+	dna         *DNAEngine
+	hbm         *HBMEngine
+	avp         *AVPEngine
 	domCompress *DOMCompressEngine
-	ncg        *NCGEngine
-	pce        *PCEEngine
-	upm        *UPMEngine
-	dra        *DRAEngine
-	mcs        *MCSEngine
-	cbl        *CBLEngine
-	uee        *UEEEngine
-	hfs        *HFSEngine
-	rcm        *RCMEngine
+	ncg         *NCGEngine
+	pce         *PCEEngine
+	upm         *UPMEngine
+	dra         *DRAEngine
+	mcs         *MCSEngine
+	cbl         *CBLEngine
+	uee         *UEEEngine
+	hfs         *HFSEngine
+	rcm         *RCMEngine
+	prf         *PrefetchEngine
 }
 
 type OptimizerProfile struct {
@@ -192,45 +193,46 @@ var mobileProfile = OptimizerProfile{
 
 func NewOptimizer(b *browser) *Optimizer {
 	o := &Optimizer{
-		adapt: newAdapt(),
-		b:          b,
-		enabled:    true,
-		profile:    defaultProfile,
-		metrics:    NewMetricsCollector(b),
-		csso:       NewCSSJSOptimizer(b),
-		media:      NewMediaOptimizer(b),
-		netq:       NewNetworkQueue(b),
-		cache:      NewSmartCache(defaultProfile.CacheMaxEntries, defaultProfile.CacheTTLMs),
-		tuner:      NewAutoTuner(b),
-		vd:         NewValueDensityEngine(b),
-		crg:        NewCRGEngine(b),
-		quick:      NewQuickOptEngine(b),
-		rhd:        NewRHDGCEngine(b),
-		pvc:        NewPVCEngine(b),
-		ehs:        NewEHSEngine(b),
-		rpc:        NewRPCEngine(b),
-		qse:        NewQSEEngine(b),
-		lod:        NewLODEngine(b),
-		uhe:        NewUHEngine(),
-		ndf:        NewNDFCache(128),
-		autotune:   NewAutoTuneUHE(),
-		gcctl:      NewAdaptiveGCController(),
-		hlrc:       NewHLRC(),
+		adapt:    NewAdapt(),
+		b:        b,
+		enabled:  true,
+		profile:  defaultProfile,
+		metrics:  NewMetricsCollector(b),
+		csso:     NewCSSJSOptimizer(b),
+		media:    NewMediaOptimizer(b),
+		netq:     NewNetworkQueue(b),
+		cache:    NewSmartCache(defaultProfile.CacheMaxEntries, defaultProfile.CacheTTLMs),
+		tuner:    NewAutoTuner(b),
+		vd:       NewValueDensityEngine(b),
+		crg:      NewCRGEngine(b),
+		quick:    NewQuickOptEngine(b),
+		rhd:      NewRHDGCEngine(b),
+		pvc:      NewPVCEngine(b),
+		ehs:      NewEHSEngine(b),
+		rpc:      NewRPCEngine(b),
+		qse:      NewQSEEngine(b),
+		lod:      NewLODEngine(b),
+		uhe:      NewUHEngine(),
+		ndf:      NewNDFCache(128),
+		autotune: NewAutoTuneUHE(),
+		gcctl:    NewAdaptiveGCController(),
+		hlrc:     NewHLRC(),
 
 		// v3.2.0 Genesis
-		dna:        NewDNAEngine(b),
-		hbm:        NewHBMEngine(),
-		avp:        NewAVPEngine(b),
+		dna:         NewDNAEngine(b),
+		hbm:         NewHBMEngine(),
+		avp:         NewAVPEngine(b),
 		domCompress: NewDOMCompressEngine(b),
-		ncg:        NewNCGEngine(b),
-		pce:        NewPCEEngine(b),
-		upm:        NewUPMEngine(b),
-		dra:        NewDRAEngine(b),
-		mcs:        NewMCSEngine(b),
-		cbl:        NewCBLEngine(b),
-		uee:        NewUEEEngine(b),
-		hfs:        NewHFSEngine(b),
-		rcm:        NewRCMEngine(b),
+		ncg:         NewNCGEngine(b),
+		pce:         NewPCEEngine(b),
+		upm:         NewUPMEngine(b),
+		dra:         NewDRAEngine(b),
+		mcs:         NewMCSEngine(b),
+		cbl:         NewCBLEngine(b),
+		uee:         NewUEEEngine(b),
+		hfs:         NewHFSEngine(b),
+		rcm:         NewRCMEngine(b),
+		prf:         NewPrefetchEngine(b),
 	}
 	o.uhe.SetHLRC(o.hlrc)
 	o.uhe.SetOptRef(o)
@@ -642,19 +644,19 @@ type NetworkQueue struct {
 	totalQueued    int
 	totalDropped   int
 	blockedDomains []string
-	
+
 	// Request coalescing
-	inflight map[string][]*RequestItem  // URL → waiting requests
+	inflight  map[string][]*RequestItem // URL → waiting requests
 	coalesced int
 }
 
 func NewNetworkQueue(b *browser) *NetworkQueue {
 	return &NetworkQueue{
-		b:             b,
-		queue:         make(PriorityQueue, 0),
-		maxConcurrent: 6,
+		b:              b,
+		queue:          make(PriorityQueue, 0),
+		maxConcurrent:  6,
 		blockedDomains: []string{},
-		inflight:      make(map[string][]*RequestItem),
+		inflight:       make(map[string][]*RequestItem),
 	}
 }
 
@@ -678,7 +680,7 @@ func (nq *NetworkQueue) Enqueue(url, method string, priority Priority) {
 		CreatedAt: time.Now(),
 	}
 	nq.totalQueued++
-	
+
 	// Check if request already in-flight for this URL
 	if waiters, ok := nq.inflight[url]; ok {
 		// Piggyback on in-flight request
@@ -686,7 +688,7 @@ func (nq *NetworkQueue) Enqueue(url, method string, priority Priority) {
 		nq.coalesced++
 		return
 	}
-	
+
 	// New request: mark as in-flight and queue
 	nq.inflight[url] = []*RequestItem{item}
 	heap.Push(&nq.queue, item)
@@ -729,13 +731,13 @@ window.__mbNetThrottleActive=function(){return{active:active,pending:pending.len
 // =============================================================================
 
 type cacheEntry struct {
-	data      interface{}
-	size      int
-	createdAt time.Time
-	ttl       time.Duration
-	hitCount  int
-	lastAccess time.Time  // K=1: most recent access
-	kthAccess  time.Time  // K=2: 2nd most recent access (LRU-K)
+	data       interface{}
+	size       int
+	createdAt  time.Time
+	ttl        time.Duration
+	hitCount   int
+	lastAccess time.Time // K=1: most recent access
+	kthAccess  time.Time // K=2: 2nd most recent access (LRU-K)
 }
 
 type SmartCache struct {
@@ -799,7 +801,7 @@ func (sc *SmartCache) Set(key string, data interface{}, size int) {
 		createdAt:  time.Now(),
 		ttl:        sc.ttl,
 		lastAccess: time.Now(),
-		kthAccess:  time.Time{},  // Not set until 2nd access
+		kthAccess:  time.Time{}, // Not set until 2nd access
 	}
 	if sc.hlrc != nil {
 		sc.hlrc.Register(key, HLRCKindCache, uint32(size/1024))
@@ -813,21 +815,21 @@ func (sc *SmartCache) evictOldest() {
 	var victimKey string
 	var victimRefTime time.Time
 	first := true
-	
+
 	for k, v := range sc.entries {
 		// Choose reference time: kthAccess if set, else createdAt
 		refTime := v.kthAccess
 		if refTime.IsZero() {
 			refTime = v.createdAt
 		}
-		
+
 		if first || refTime.Before(victimRefTime) {
 			victimKey = k
 			victimRefTime = refTime
 			first = false
 		}
 	}
-	
+
 	if victimKey != "" {
 		delete(sc.entries, victimKey)
 		sc.evicted++
@@ -942,10 +944,11 @@ func NewAutoTuner(b *browser) *AutoTuner {
 	}
 }
 
-func (at *AutoTuner) Evaluate(metrics *PageMetrics) []TuneResult {
+func (at *AutoTuner) Evaluate(metrics *PageMetrics, dryRun ...bool) []TuneResult {
 	if !at.enabled {
 		return nil
 	}
+	isDryRun := len(dryRun) > 0 && dryRun[0]
 	at.mu.Lock()
 	defer at.mu.Unlock()
 
@@ -996,7 +999,9 @@ func (at *AutoTuner) Evaluate(metrics *PageMetrics) []TuneResult {
 				Before:    *metrics,
 				AppliedAt: time.Now().UTC().Format(time.RFC3339),
 			}
-			at.applyAction(rule.Action)
+			if !isDryRun {
+				at.applyAction(rule.Action)
+			}
 			actions = append(actions, result)
 		}
 	}
@@ -1075,7 +1080,7 @@ func (b *browser) handleOptimizerMetrics(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	actions := b.opt.tuner.Evaluate(pm)
+	actions := b.opt.tuner.Evaluate(pm, true)
 
 	response := map[string]interface{}{
 		"ok":      true,
@@ -1169,7 +1174,7 @@ func (b *browser) handleOptimizerRunAll(w http.ResponseWriter, r *http.Request) 
 	}
 
 	o := b.opt
-	r.Body.Close()
+	defer r.Body.Close()
 	if !o.IsEnabled() {
 		writeError(w, 400, "optimizer disabled")
 		return

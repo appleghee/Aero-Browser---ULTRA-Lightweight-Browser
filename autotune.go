@@ -9,34 +9,34 @@ import (
 
 // AutoTuneUHE - automatically adjust UHE thresholds based on site patterns
 type AutoTuneUHE struct {
-	mu              sync.RWMutex
-	enabled         bool
+	mu               sync.RWMutex
+	enabled          bool
 	profilesByDomain map[string]*SiteProfile
-	globalProfile   *SiteProfile
-	stopCh          chan struct{}
-	optRef          *Optimizer
+	globalProfile    *SiteProfile
+	stopCh           chan struct{}
+	optRef           *Optimizer
 }
 
 type SiteProfile struct {
-	Domain        string
-	CPUUsage      float64
-	MemUsage      float64
-	NetworkUsage  float64
-	AccessRate    float64
-	DecayRate     float64
-	HotThresh     float64
-	WarmThresh    float64
-	CoolThresh    float64
-	Samples       int
-	LastUpdate    time.Time
+	Domain          string
+	CPUUsage        float64
+	MemUsage        float64
+	NetworkUsage    float64
+	AccessRate      float64
+	DecayRate       float64
+	HotThresh       float64
+	WarmThresh      float64
+	CoolThresh      float64
+	Samples         int
+	LastUpdate      time.Time
 	Recommendations string
 }
 
 func NewAutoTuneUHE() *AutoTuneUHE {
 	return &AutoTuneUHE{
-		enabled:         true,
+		enabled:          true,
 		profilesByDomain: make(map[string]*SiteProfile),
-		globalProfile:   &SiteProfile{Domain: "global"},
+		globalProfile:    &SiteProfile{Domain: "global"},
 	}
 }
 
@@ -211,7 +211,7 @@ func (a *AutoTuneUHE) GetGlobalProfile() *SiteProfile {
 func (a *AutoTuneUHE) AllProfiles() map[string]*SiteProfile {
 	a.mu.RLock()
 	defer a.mu.RUnlock()
-	
+
 	m := make(map[string]*SiteProfile)
 	for k, v := range a.profilesByDomain {
 		m[k] = v
@@ -232,6 +232,6 @@ func (a *AutoTuneUHE) Recommend(domain string) string {
 func (a *AutoTuneUHE) String() string {
 	a.mu.RLock()
 	defer a.mu.RUnlock()
-	return fmt.Sprintf("AutoTuneUHE: %d domains profiled, global decay=%.3f", 
+	return fmt.Sprintf("AutoTuneUHE: %d domains profiled, global decay=%.3f",
 		len(a.profilesByDomain), a.globalProfile.DecayRate)
 }

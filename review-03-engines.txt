@@ -1,0 +1,1281 @@
+﻿// HYPERSPEED BROWSER — Site-Specific Engines
+
+//-- dna.go --
+// Tab/Page DNA â€” per-site behavioral fingerprint
+package main
+
+import (
+	"fmt"
+	"net/http"
+	"sync"
+	"time"
+)
+
+type DNAEngine struct {
+	b       *browser
+	mu      sync.Mutex
+	enabled bool
+	stats   DNAStats
+	fingerprints map[string]*PageDNA
+}
+
+type PageDNA struct {
+	Domain        string   `json:"domain"`
+	ColorScheme   string   `json:"colorScheme"`
+	LayoutPattern string   `json:"layoutPattern"`
+	Interactives  []string `json:"interactives"`
+	Scripts       []string `json:"scripts"`
+	Fonts         []string `json:"fonts"`
+	AvgDOMDepth   float64  `json:"avgDOMDepth"`
+	LastSeen      time.Time `json:"-"`
+}
+
+type DNAStats struct {
+	Profiled  int    `json:"profiled"`
+	CacheSize int    `json:"cacheSize"`
+	Status    string `json:"status"`
+}
+
+const dnaGatherJS = `(function(){
+var d={domain:location.hostname};
+var bg=getComputedStyle(document.body).backgroundColor;
+var isDark=function(c){if(!c)return false;var m=c.match(/rgba?\((\d+),(\d+),(\d+)/);if(!m)return false;return(parseInt(m[1])*299+parseInt(m[2])*587+parseInt(m[3])*114)/1000<128;}
+d.colorScheme=isDark(bg)?'dark':'light';
+var layout='unknown';var tags={};
+document.querySelectorAll('body *').forEach(function(el){var t=el.tagName.toLowerCase();tags[t]=(tags[t]||0)+1;});
+if(tags.nav&&tags.main)layout='has-nav-main';
+else if(tags.header&&tags.footer)layout='has-header-footer';
+else if(tags.section)layout='section-heavy';
+d.layoutPattern=layout;
+var ints=[];document.querySelectorAll('a,button,input,select,textarea,[tabindex]').forEach(function(el,i){
+if(i<10&&el.textContent&&el.textContent.trim().length<50)ints.push((el.tagName||'').toLowerCase()+':'+(el.textContent||'').trim().slice(0,20));});
+d.interactives=ints;
+var scrs=[];document.querySelectorAll('script[src]').forEach(function(s,i){if(i<10)scrs.push(s.src.split('/').pop()||'');});
+d.scripts=scrs;
+var fts=[];document.fonts.forEach(function(f,i){if(i<10)fts.push(f.family);});
+d.fonts=fts;
+var dep=0,c=0;function w(e,d){if(d>20||!e)return;c++;dep+=d;for(var i=0;i<e.children.length;i++)w(e.children[i],d+1);}
+w(document.body,0);d.avgDOMDepth=c>0?Math.round(dep/c*10)/10:0;
+return d;
+})()`
+
+func NewDNAEngine(b *browser) *DNAEngine {
+	return &DNAEngine{
+		b:            b,
+		enabled:      true,
+		fingerprints: make(map[string]*PageDNA),
+	}
+}
+
+func (d *DNAEngine) Start() {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if !d.enabled {
+		return
+	}
+	// DNA runs on-demand via Fingerprint() â€” no persistent JS needed
+}
+
+func (d *DNAEngine) evictOldestDNA() {
+	var oldest string
+	var oldestTime time.Time
+	for domain, p := range d.fingerprints {
+		if oldest == "" || p.LastSeen.Before(oldestTime) {
+			oldest = domain
+			oldestTime = p.LastSeen
+		}
+	}
+	delete(d.fingerprints, oldest)
+}
+
+func (d *DNAEngine) Fingerprint() (*PageDNA, error) {
+	var dna PageDNA
+	if err := d.b.syncUnwrapInto(dnaGatherJS, 10*time.Second, &dna); err != nil {
+		return nil, fmt.Errorf("dna scan: %w", err)
+	}
+	dna.LastSeen = time.Now()
+	d.mu.Lock()
+	if len(d.fingerprints) >= 500 {
+		d.evictOldestDNA()
+	}
+	d.fingerprints[dna.Domain] = &dna
+	d.stats = DNAStats{
+		Profiled:  len(d.fingerprints),
+		CacheSize: len(d.fingerprints),
+		Status:    "active",
+	}
+	d.mu.Unlock()
+	return &dna, nil
+}
+
+func (d *DNAEngine) Get(domain string) *PageDNA {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return d.fingerprints[domain]
+}
+
+func (d *DNAEngine) Stats() DNAStats {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.stats.Profiled = len(d.fingerprints)
+	d.stats.CacheSize = len(d.fingerprints)
+	return d.stats
+}
+
+func (b *browser) handleDNAFingerprint(w http.ResponseWriter, r *http.Request) {
+	if b.opt == nil || b.opt.dna == nil {
+		writeError(w, 503, "DNA not init")
+		return
+	}
+	dna, err := b.opt.dna.Fingerprint()
+	if err != nil {
+		writeError(w, 500, err.Error())
+		return
+	}
+	writeJSON(w, map[string]interface{}{"ok": true, "dna": dna})
+}
+
+func (b *browser) handleDNAStats(w http.ResponseWriter, r *http.Request) {
+	if b.opt == nil || b.opt.dna == nil {
+		writeError(w, 503, "DNA not init")
+		return
+	}
+	s := b.opt.dna.Stats()
+	writeJSON(w, map[string]interface{}{"ok": true, "stats": s})
+}
+
+func (b *browser) handleDNAClear(w http.ResponseWriter, r *http.Request) {
+	if b.opt == nil || b.opt.dna == nil {
+		writeError(w, 503, "DNA not init")
+		return
+	}
+	b.opt.dna.mu.Lock()
+	b.opt.dna.fingerprints = make(map[string]*PageDNA)
+	b.opt.dna.mu.Unlock()
+	writeJSON(w, map[string]interface{}{"ok": true, "msg": "DNA cache cleared"})
+}
+//-- hbm.go --
+// HBM â€” Heat-Based Memory allocator
+package main
+
+import (
+	"fmt"
+	"net/http"
+	"runtime"
+	"runtime/debug"
+	"sync"
+	"time"
+)
+
+type HBMEngine struct {
+	b       *browser
+	mu      sync.Mutex
+	enabled bool
+	stats   HBMStats
+	hotPool int64
+	coolPool int64
+	stopCh  chan struct{}
+}
+
+type HBMStats struct {
+	HotAllocMB  int64  `json:"hotAllocMB"`
+	CoolAllocMB int64  `json:"coolAllocMB"`
+	GCPercent   int    `json:"gcPercent"`
+	HotRatio    string `json:"hotRatio"`
+	Status      string `json:"status"`
+}
+
+func NewHBMEngine() *HBMEngine {
+	return &HBMEngine{enabled: true}
+}
+
+func (h *HBMEngine) Start() {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if !h.enabled || h.stopCh != nil {
+		return
+	}
+	h.stopCh = make(chan struct{})
+	go h.loop()
+}
+
+func (h *HBMEngine) Stop() {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.stopCh != nil {
+		close(h.stopCh)
+		h.stopCh = nil
+	}
+}
+
+func (h *HBMEngine) loop() {
+	ticker := time.NewTicker(30 * time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ticker.C:
+			var m runtime.MemStats
+			runtime.ReadMemStats(&m)
+			hot := int64(m.Alloc) * 60 / 100
+			cool := int64(m.Alloc) * 40 / 100
+			h.mu.Lock()
+			h.hotPool = hot / (1024 * 1024)
+			h.coolPool = cool / (1024 * 1024)
+			ratio := float64(0)
+			if h.hotPool+h.coolPool > 0 {
+				ratio = float64(h.hotPool) * 100 / float64(h.hotPool+h.coolPool)
+			}
+			gc := debug.SetGCPercent(-1)
+			h.stats = HBMStats{
+				HotAllocMB:  h.hotPool,
+				CoolAllocMB: h.coolPool,
+				GCPercent:   gc,
+				HotRatio:    fmt.Sprintf("%.0f%%", ratio),
+				Status:      "active",
+			}
+			h.mu.Unlock()
+		case <-h.stopCh:
+			return
+		}
+	}
+}
+
+func (h *HBMEngine) Stats() HBMStats {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.stats
+}
+
+func (b *browser) handleHBMStats(w http.ResponseWriter, r *http.Request) {
+	if b.opt == nil || b.opt.hbm == nil {
+		writeError(w, 503, "HBM not init")
+		return
+	}
+	s := b.opt.hbm.Stats()
+	writeJSON(w, map[string]interface{}{"ok": true, "stats": s})
+}
+//-- avp.go --
+// AVP â€” Adaptive Viewport Predictor (scroll prediction)
+package main
+
+import (
+	_ "embed"
+	"net/http"
+	"sync"
+	"time"
+)
+
+//go:embed avp.js
+var avpJS string
+
+type AVPEngine struct {
+	b       *browser
+	mu      sync.Mutex
+	enabled bool
+	stats   AVPStats
+}
+
+type AVPStats struct {
+	Velocity    float64 `json:"velocity"`
+	Direction   int     `json:"direction"`
+	Predictions int     `json:"predictions"`
+	Hits        int     `json:"hits"`
+	Status      string  `json:"status"`
+}
+
+const avpGatherJS = `(function(){var s=window.__mbAVP;if(!s)return{velocity:0,direction:0,predictions:0,hits:0,status:'n/a'};return{velocity:s.velocity,direction:s.direction,predictions:s._pred||0,hits:s._hits||0,status:'ok'};})()`
+
+func NewAVPEngine(b *browser) *AVPEngine {
+	return &AVPEngine{b: b, enabled: true}
+}
+
+func (a *AVPEngine) Start() {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if !a.enabled {
+		return
+	}
+	a.b.syncExec(avpJS)
+}
+
+func (a *AVPEngine) Gather() *AVPStats {
+	var s AVPStats
+	if err := a.b.syncUnwrapInto(avpGatherJS, 5*time.Second, &s); err != nil {
+		return &a.stats
+	}
+	a.mu.Lock()
+	a.stats = s
+	a.mu.Unlock()
+	return &s
+}
+
+func (b *browser) handleAVPStats(w http.ResponseWriter, r *http.Request) {
+	if b.opt == nil || b.opt.avp == nil {
+		writeError(w, 503, "AVP not init")
+		return
+	}
+	s := b.opt.avp.Gather()
+	writeJSON(w, map[string]interface{}{"ok": true, "stats": s})
+}
+//-- ncg.go --
+// NCG â€” Network Cost Graph
+package main
+
+import (
+	"net/http"
+	"sort"
+	"sync"
+	"time"
+)
+
+type NCGEngine struct {
+	b       *browser
+	mu      sync.Mutex
+	enabled bool
+	stats   NCGStats
+	costs   map[string]*NCGEntry
+	maxDomains int
+}
+
+type NCGEntry struct {
+	Domain    string
+	TotalSize int64
+	Requests  int
+	AvgLatency time.Duration
+	LastSeen  time.Time
+}
+
+type NCGStats struct {
+	Tracked   int     `json:"tracked"`
+	TotalSize int64   `json:"totalSizeKB"`
+	TotalReqs int     `json:"totalReqs"`
+	TopDomain string  `json:"topDomain"`
+	Status    string  `json:"status"`
+}
+
+func NewNCGEngine(b *browser) *NCGEngine {
+	return &NCGEngine{b: b, enabled: true, costs: make(map[string]*NCGEntry), maxDomains: 500}
+}
+
+func (n *NCGEngine) Start() {}
+
+func (n *NCGEngine) Track(domain string, size int64, latency time.Duration) {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	e, ok := n.costs[domain]
+	if !ok {
+		if len(n.costs) >= n.maxDomains {
+			n.evictOldest()
+		}
+		e = &NCGEntry{Domain: domain}
+		n.costs[domain] = e
+	}
+	e.TotalSize += size
+	e.Requests++
+	e.AvgLatency = (e.AvgLatency*time.Duration(e.Requests-1) + latency) / time.Duration(e.Requests)
+	e.LastSeen = time.Now()
+}
+
+func (n *NCGEngine) evictOldest() {
+	var oldest string
+	var oldestTime time.Time
+	first := true
+	for k, e := range n.costs {
+		if first || e.LastSeen.Before(oldestTime) {
+			oldest = k
+			oldestTime = e.LastSeen
+			first = false
+		}
+	}
+	if oldest != "" {
+		delete(n.costs, oldest)
+	}
+}
+
+func (n *NCGEngine) Stats() NCGStats {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	s := NCGStats{Tracked: len(n.costs), Status: "active"}
+	var top string
+	var maxSize int64
+	for _, e := range n.costs {
+		s.TotalSize += e.TotalSize
+		s.TotalReqs += e.Requests
+		if e.TotalSize > maxSize {
+			maxSize = e.TotalSize
+			top = e.Domain
+		}
+	}
+	s.TopDomain = top
+	return s
+}
+
+func (n *NCGEngine) HeavyDomains(limit int) []NCGEntry {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	var list []NCGEntry
+	for _, e := range n.costs {
+		list = append(list, *e)
+	}
+	sort.Slice(list, func(i, j int) bool {
+		return list[i].TotalSize > list[j].TotalSize
+	})
+	if len(list) > limit {
+		list = list[:limit]
+	}
+	return list
+}
+
+func (b *browser) handleNCGStats(w http.ResponseWriter, r *http.Request) {
+	if b.opt == nil || b.opt.ncg == nil {
+		writeError(w, 503, "NCG not init")
+		return
+	}
+	s := b.opt.ncg.Stats()
+	writeJSON(w, map[string]interface{}{"ok": true, "stats": s})
+}
+//-- pce.go --
+// PCE â€” Page Change Engine (mutation batching)
+package main
+
+import (
+	_ "embed"
+	"net/http"
+	"sync"
+	"time"
+)
+
+//go:embed pce.js
+var pceJS string
+
+type PCEEngine struct {
+	b       *browser
+	mu      sync.Mutex
+	enabled bool
+	stats   PCEStats
+}
+
+type PCEStats struct {
+	Batched    int    `json:"batched"`
+	Flushed    int    `json:"flushed"`
+	AvgBatch   int    `json:"avgBatch"`
+	Status     string `json:"status"`
+}
+
+const pceGatherJS = `(function(){var s=window.__mbPCE;if(!s)return{batched:0,flushed:0,avgBatch:0,status:'n/a'};return{batched:s._batched||0,flushed:s._flushed||0,avgBatch:s._batched>0?Math.round(s._flushed/s._batched):0,status:'ok'};})()`
+
+func NewPCEEngine(b *browser) *PCEEngine {
+	return &PCEEngine{b: b, enabled: true}
+}
+
+func (p *PCEEngine) Start() {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if !p.enabled {
+		return
+	}
+	p.b.syncExec(pceJS)
+}
+
+func (p *PCEEngine) Gather() *PCEStats {
+	var s PCEStats
+	if err := p.b.syncUnwrapInto(pceGatherJS, 5*time.Second, &s); err != nil {
+		return &p.stats
+	}
+	p.mu.Lock()
+	p.stats = s
+	p.mu.Unlock()
+	return &s
+}
+
+func (b *browser) handlePCEStats(w http.ResponseWriter, r *http.Request) {
+	if b.opt == nil || b.opt.pce == nil {
+		writeError(w, 503, "PCE not init")
+		return
+	}
+	s := b.opt.pce.Gather()
+	writeJSON(w, map[string]interface{}{"ok": true, "stats": s})
+}
+//-- upm.go --
+// UPM â€” User Presence Model (idle detection)
+package main
+
+import (
+	_ "embed"
+	"net/http"
+	"sync"
+	"time"
+)
+
+//go:embed upm.js
+var upmJS string
+
+type UPMEngine struct {
+	b       *browser
+	mu      sync.Mutex
+	enabled bool
+	stats   UPMStats
+}
+
+type UPMStats struct {
+	State     string `json:"state"`
+	IdleSec   int    `json:"idleSec"`
+	TotalIdle int    `json:"totalIdle"`
+	Status    string `json:"status"`
+}
+
+const upmGatherJS = `(function(){var s=window.__mbUPM;if(!s)return{state:'unknown',idleSec:0,totalIdle:0,status:'n/a'};return{state:s.state,idleSec:Math.round((Date.now()-s._last)/1000),totalIdle:s._total||0,status:'ok'};})()`
+
+func NewUPMEngine(b *browser) *UPMEngine {
+	return &UPMEngine{b: b, enabled: true}
+}
+
+func (u *UPMEngine) Start() {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	if !u.enabled {
+		return
+	}
+	u.b.syncExec(upmJS)
+}
+
+func (u *UPMEngine) Gather() *UPMStats {
+	var s UPMStats
+	if err := u.b.syncUnwrapInto(upmGatherJS, 5*time.Second, &s); err != nil {
+		return &u.stats
+	}
+	u.mu.Lock()
+	u.stats = s
+	u.mu.Unlock()
+	return &s
+}
+
+func (b *browser) handleUPMStats(w http.ResponseWriter, r *http.Request) {
+	if b.opt == nil || b.opt.upm == nil {
+		writeError(w, 503, "UPM not init")
+		return
+	}
+	s := b.opt.upm.Gather()
+	writeJSON(w, map[string]interface{}{"ok": true, "stats": s})
+}
+//-- lod.go --
+package main
+
+import (
+	_ "embed"
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"strings"
+	"sync"
+	"time"
+)
+
+//go:embed lod.js
+var lodJS string
+
+type LODEngine struct {
+	b       *browser
+	mu      sync.Mutex
+	enabled bool
+	stats   LODStats
+}
+
+type LODStats struct {
+	Total   int     `json:"total"`
+	Level0  int     `json:"level0"`
+	Level1  int     `json:"level1"`
+	Level2  int     `json:"level2"`
+	Level3  int     `json:"level3"`
+	Memory  float64 `json:"memoryMB"`
+	SavedKB float64 `json:"savedKB"`
+	Inflate int     `json:"inflates"`
+	Cascade int     `json:"cascade"` // IO Cascade: elements using content-visibility:auto
+	Status  string  `json:"status"`
+}
+
+var lodGatherJS = `(function(){
+var s=window.__mbLOD;if(!s)return{total:0,level0:0,level1:0,level2:0,level3:0,memoryMB:0,savedKB:0,inflates:0,status:'n/a'};
+var l=s.levels,r=s.rects;
+var total=l.length||0,le0=0,le1=0,le2=0,le3=0;
+for(var i=0;i<total;i++){var v=l[i];if(v===0)le0++;else if(v===1)le1++;else if(v===2)le2++;else le3++}
+var mem=performance.memory?Math.round(performance.memory.usedJSHeapSize/1048576*10)/10:0;
+var kb=0;
+for(var k in r){var o=r[k];if(o&&o.len)kb+=o.len}
+return{total:total,level0:le0,level1:le1,level2:le2,level3:le3,memoryMB:mem,savedKB:Math.round(kb/1024),inflates:s.inflates||0,cascade:s.cvCount||0,status:'active'}
+})()`
+
+var lodToggleJS = `(function(){var s=window.__mbLOD;if(!s)return 'no LOD';s.enabled=!s.enabled;return s.enabled?'enabled':'disabled'})()`
+
+func NewLODEngine(b *browser) *LODEngine {
+	return &LODEngine{b: b, enabled: true}
+}
+
+func (l *LODEngine) Start() {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if !l.enabled {
+		return
+	}
+	l.b.syncExec(lodJS)
+}
+
+func (l *LODEngine) Gather() *LODStats {
+	var s LODStats
+	if err := l.b.syncUnwrapInto(lodGatherJS, 5*time.Second, &s); err != nil {
+		return &l.stats
+	}
+	l.mu.Lock()
+	l.stats = s
+	l.mu.Unlock()
+	return &s
+}
+
+func (l *LODEngine) Toggle() string {
+	v, err := l.b.syncUnwrap(lodToggleJS, 5*time.Second)
+	if err != nil {
+		return "error"
+	}
+	return fmt.Sprint(v)
+}
+
+func (l *LODEngine) HandleAPI(prefix string) http.Handler {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		path := strings.TrimPrefix(r.URL.Path, prefix)
+		switch path {
+		case "/start":
+			l.Start()
+			writeJSON(w, map[string]interface{}{"ok": true, "msg": "LOD started"})
+		case "/stats":
+			s := l.Gather()
+			writeJSON(w, map[string]interface{}{"ok": true, "stats": s})
+		case "/toggle":
+			msg := l.Toggle()
+			writeJSON(w, map[string]interface{}{"ok": true, "msg": msg})
+		default:
+			writeJSON(w, map[string]interface{}{"ok": false, "error": "unknown LOD path"})
+		}
+	})
+	return mux
+}
+
+func lodHandler(l *LODEngine) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case "GET":
+			s := l.Gather()
+			writeJSON(w, map[string]interface{}{"ok": true, "stats": s})
+		case "POST":
+			var req struct {
+				Action string `json:"action"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				writeError(w, 400, "bad request")
+				return
+			}
+			switch req.Action {
+			case "start":
+				l.Start()
+				writeJSON(w, map[string]interface{}{"ok": true, "msg": "LOD started"})
+			case "toggle":
+				msg := l.Toggle()
+				writeJSON(w, map[string]interface{}{"ok": true, "msg": msg})
+			default:
+				writeError(w, 400, "unknown action")
+			}
+		}
+	}
+}
+
+func (b *browser) handleLODStart(w http.ResponseWriter, r *http.Request) {
+	if b.opt == nil || b.opt.lod == nil {
+		writeError(w, 503, "LOD not init")
+		return
+	}
+	b.opt.lod.Start()
+	writeJSON(w, map[string]interface{}{"ok": true, "msg": "LOD started"})
+}
+
+func (b *browser) handleLODStats(w http.ResponseWriter, r *http.Request) {
+	if b.opt == nil || b.opt.lod == nil {
+		writeError(w, 503, "LOD not init")
+		return
+	}
+	s := b.opt.lod.Gather()
+	writeJSON(w, map[string]interface{}{"ok": true, "stats": s})
+}
+
+func (b *browser) handleLODToggle(w http.ResponseWriter, r *http.Request) {
+	if b.opt == nil || b.opt.lod == nil {
+		writeError(w, 503, "LOD not init")
+		return
+	}
+	msg := b.opt.lod.Toggle()
+	writeJSON(w, map[string]interface{}{"ok": true, "msg": msg})
+}
+
+func (b *browser) handleLOD(w http.ResponseWriter, r *http.Request) {
+	if b.opt == nil || b.opt.lod == nil {
+		writeError(w, 503, "LOD not init")
+		return
+	}
+	lodHandler(b.opt.lod)(w, r)
+}
+
+// IO Cascade stats â€” wraps LOD engine cascade count
+func (b *browser) handleIOCStats(w http.ResponseWriter, r *http.Request) {
+	if b.opt == nil || b.opt.lod == nil {
+		writeError(w, 503, "LOD not init")
+		return
+	}
+	s := b.opt.lod.Gather()
+	writeJSON(w, map[string]interface{}{
+		"ok":     true,
+		"stats":  s,
+		"engine": "io-cascade",
+		"note":   "content-visibility:auto via IO Cascade (v3.2 alpha)",
+	})
+}
+//-- extra_engines.go --
+// DRA, MCS, CBL, UEE, HFS, RCM â€” remaining Genesis engines
+package main
+
+import (
+	_ "embed"
+	"net/http"
+	"sync"
+	"time"
+)
+
+// =========================================================================
+// DRA â€” Dynamic Resource Adjustment
+// =========================================================================
+
+//go:embed dra.js
+var draJS string
+
+type DRAEngine struct {
+	b       *browser
+	mu      sync.Mutex
+	enabled bool
+	stats   DRAStats
+}
+
+type DRAStats struct {
+	Throttled   int    `json:"throttled"`
+	Budget      string `json:"budget"`
+	Status      string `json:"status"`
+}
+
+const draGatherJS = `(function(){var s=window.__mbDRA;if(!s)return{throttled:0,budget:'100%',status:'n/a'};return{throttled:s._throttled||0,budget:Math.round((s._budget||100))+'%',status:'ok'};})()`
+
+func NewDRAEngine(b *browser) *DRAEngine {
+	return &DRAEngine{b: b, enabled: true}
+}
+
+func (d *DRAEngine) Start() {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if !d.enabled { return }
+	d.b.syncExec(draJS)
+}
+
+func (d *DRAEngine) Gather() *DRAStats {
+	var s DRAStats
+	if err := d.b.syncUnwrapInto(draGatherJS, 5*time.Second, &s); err != nil { return &d.stats }
+	d.mu.Lock()
+	d.stats = s
+	d.mu.Unlock()
+	return &s
+}
+
+// =========================================================================
+// MCS â€” Micro-Controller Scheduler
+// =========================================================================
+
+//go:embed mcs.js
+var mcsJS string
+
+type MCSEngine struct {
+	b       *browser
+	mu      sync.Mutex
+	enabled bool
+	stats   MCSStats
+}
+
+type MCSStats struct {
+	Deferred int    `json:"deferred"`
+	Executed int    `json:"executed"`
+	Status   string `json:"status"`
+}
+
+const mcsGatherJS = `(function(){var s=window.__mbMCS;if(!s)return{deferred:0,executed:0,status:'n/a'};return{deferred:s._def||0,executed:s._exe||0,status:'ok'};})()`
+
+func NewMCSEngine(b *browser) *MCSEngine {
+	return &MCSEngine{b: b, enabled: true}
+}
+
+func (m *MCSEngine) Start() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if !m.enabled { return }
+	m.b.syncExec(mcsJS)
+}
+
+func (m *MCSEngine) Gather() *MCSStats {
+	var s MCSStats
+	if err := m.b.syncUnwrapInto(mcsGatherJS, 5*time.Second, &s); err != nil { return &m.stats }
+	m.mu.Lock()
+	m.stats = s
+	m.mu.Unlock()
+	return &s
+}
+
+// =========================================================================
+// CBL â€” Content-Based Loading
+// =========================================================================
+
+//go:embed cbl.js
+var cblJS string
+
+type CBLEngine struct {
+	b       *browser
+	mu      sync.Mutex
+	enabled bool
+	stats   CBLStats
+}
+
+type CBLStats struct {
+	Deferred  int    `json:"deferred"`
+	Prioritized int  `json:"prioritized"`
+	Status    string `json:"status"`
+}
+
+const cblGatherJS = `(function(){var s=window.__mbCBL;if(!s)return{deferred:0,prioritized:0,status:'n/a'};return{deferred:s._def||0,prioritized:s._pri||0,status:'ok'};})()`
+
+func NewCBLEngine(b *browser) *CBLEngine {
+	return &CBLEngine{b: b, enabled: true}
+}
+
+func (c *CBLEngine) Start() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if !c.enabled { return }
+	c.b.syncExec(cblJS)
+}
+
+func (c *CBLEngine) Gather() *CBLStats {
+	var s CBLStats
+	if err := c.b.syncUnwrapInto(cblGatherJS, 5*time.Second, &s); err != nil { return &c.stats }
+	c.mu.Lock()
+	c.stats = s
+	c.mu.Unlock()
+	return &s
+}
+
+// =========================================================================
+// UEE â€” Unified Event Engine
+// =========================================================================
+
+//go:embed uee.js
+var ueeJS string
+
+type UEEEngine struct {
+	b       *browser
+	mu      sync.Mutex
+	enabled bool
+	stats   UEEStats
+}
+
+type UEEStats struct {
+	Delegated int    `json:"delegated"`
+	Saved     int    `json:"saved"`
+	Status    string `json:"status"`
+}
+
+const ueeGatherJS = `(function(){var s=window.__mbUEE;if(!s)return{delegated:0,saved:0,status:'n/a'};return{delegated:s._del||0,saved:s._sav||0,status:'ok'};})()`
+
+func NewUEEEngine(b *browser) *UEEEngine {
+	return &UEEEngine{b: b, enabled: true}
+}
+
+func (u *UEEEngine) Start() {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	if !u.enabled { return }
+	u.b.syncExec(ueeJS)
+}
+
+func (u *UEEEngine) Gather() *UEEStats {
+	var s UEEStats
+	if err := u.b.syncUnwrapInto(ueeGatherJS, 5*time.Second, &s); err != nil { return &u.stats }
+	u.mu.Lock()
+	u.stats = s
+	u.mu.Unlock()
+	return &s
+}
+
+// =========================================================================
+// HFS â€” Heat-File System
+// =========================================================================
+
+//go:embed hfs.js
+var hfsJS string
+
+type HFSEngine struct {
+	b       *browser
+	mu      sync.Mutex
+	enabled bool
+	stats   HFSStats
+}
+
+type HFSStats struct {
+	HotFiles  int    `json:"hotFiles"`
+	Cached    int    `json:"cached"`
+	Status    string `json:"status"`
+}
+
+const hfsGatherJS = `(function(){var s=window.__mbHFS;if(!s)return{hotFiles:0,cached:0,status:'n/a'};return{hotFiles:s._hot||0,cached:Object.keys(s._store||{}).length,status:'ok'};})()`
+
+func NewHFSEngine(b *browser) *HFSEngine {
+	return &HFSEngine{b: b, enabled: true}
+}
+
+func (h *HFSEngine) Start() {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if !h.enabled { return }
+	h.b.syncExec(hfsJS)
+}
+
+func (h *HFSEngine) Gather() *HFSStats {
+	var s HFSStats
+	if err := h.b.syncUnwrapInto(hfsGatherJS, 5*time.Second, &s); err != nil { return &h.stats }
+	h.mu.Lock()
+	h.stats = s
+	h.mu.Unlock()
+	return &s
+}
+
+// =========================================================================
+// RCM â€” Resource Cost Model
+// =========================================================================
+
+//go:embed rcm.js
+var rcmJS string
+
+type RCMEngine struct {
+	b       *browser
+	mu      sync.Mutex
+	enabled bool
+	stats   RCMStats
+}
+
+type RCMStats struct {
+	Models    int    `json:"models"`
+	Threshold string `json:"threshold"`
+	Status    string `json:"status"`
+}
+
+const rcmGatherJS = `(function(){var s=window.__mbRCM;if(!s)return{models:0,threshold:'auto',status:'n/a'};return{models:Object.keys(s._models||{}).length,threshold:s._thresh||'auto',status:'ok'};})()`
+
+func NewRCMEngine(b *browser) *RCMEngine {
+	return &RCMEngine{b: b, enabled: true}
+}
+
+func (r *RCMEngine) Start() {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if !r.enabled { return }
+	r.b.syncExec(rcmJS)
+}
+
+func (r *RCMEngine) Gather() *RCMStats {
+	var s RCMStats
+	if err := r.b.syncUnwrapInto(rcmGatherJS, 5*time.Second, &s); err != nil { return &r.stats }
+	r.mu.Lock()
+	r.stats = s
+	r.mu.Unlock()
+	return &s
+}
+
+// =========================================================================
+// API handlers
+// =========================================================================
+
+func (b *browser) handleDRAStats(w http.ResponseWriter, r *http.Request) {
+	if b.opt == nil || b.opt.dra == nil { writeError(w, 503, "DRA not init"); return }
+	writeJSON(w, map[string]interface{}{"ok": true, "stats": b.opt.dra.Gather()})
+}
+
+func (b *browser) handleMCSStats(w http.ResponseWriter, r *http.Request) {
+	if b.opt == nil || b.opt.mcs == nil { writeError(w, 503, "MCS not init"); return }
+	writeJSON(w, map[string]interface{}{"ok": true, "stats": b.opt.mcs.Gather()})
+}
+
+func (b *browser) handleCBLStats(w http.ResponseWriter, r *http.Request) {
+	if b.opt == nil || b.opt.cbl == nil { writeError(w, 503, "CBL not init"); return }
+	writeJSON(w, map[string]interface{}{"ok": true, "stats": b.opt.cbl.Gather()})
+}
+
+func (b *browser) handleUEEStats(w http.ResponseWriter, r *http.Request) {
+	if b.opt == nil || b.opt.uee == nil { writeError(w, 503, "UEE not init"); return }
+	writeJSON(w, map[string]interface{}{"ok": true, "stats": b.opt.uee.Gather()})
+}
+
+func (b *browser) handleHFSStats(w http.ResponseWriter, r *http.Request) {
+	if b.opt == nil || b.opt.hfs == nil { writeError(w, 503, "HFS not init"); return }
+	writeJSON(w, map[string]interface{}{"ok": true, "stats": b.opt.hfs.Gather()})
+}
+
+func (b *browser) handleRCMStats(w http.ResponseWriter, r *http.Request) {
+	if b.opt == nil || b.opt.rcm == nil { writeError(w, 503, "RCM not init"); return }
+	writeJSON(w, map[string]interface{}{"ok": true, "stats": b.opt.rcm.Gather()})
+}
+//-- ehs.go --
+package main
+
+import (
+	"net/http"
+	"sync"
+	"time"
+)
+
+type EHSEngine struct {
+	b       *browser
+	mu      sync.Mutex
+	enabled bool
+	stats   EHSStats
+}
+
+type EHSStats struct {
+	Hot     int     `json:"hot"`
+	Warm    int     `json:"warm"`
+	Cold    int     `json:"cold"`
+	Dormant int     `json:"dormant"`
+	Splits  int     `json:"splits"`
+	Total   int     `json:"total"`
+	Status  string  `json:"status"`
+}
+
+const ehsJS = `(function(){
+if(window.__mbEHS)return;
+(function(){
+var H=window.__mbEHS={
+hot:[],warm:[],cold:[],dormant:[],
+uid:0,hotN:0,warmN:0,coldN:0,dormantN:0,splitN:0,totalN:0,
+running:false,interval:null,
+_nextId:function(){return 'ehs_'+(++H.uid);},
+_add:function(cb,ms,src,heat){
+var task={
+id:H._nextId(),cb:cb,ms:ms||0,src:src||'unknown',
+heat:heat||50,started:false,lastActive:Date.now(),
+sliced:false,sliceIdx:0,dormant:false
+};
+H.totalN++;
+if(task.heat>100){H.hot.push(task);H.hotN++;}
+else if(task.heat>30){H.warm.push(task);H.warmN++;}
+else{H.cold.push(task);H.coldN++;}
+H._schedule();
+},
+_schedule:function(){
+if(H.running)return;
+H.running=true;
+H._tick();
+},
+_tick:function(){
+if(!H.running)return;
+var task=H._pick();
+if(task){
+if(task.heat<20&&(Date.now()-task.lastActive)>30000&&!task.dormant){
+task.dormant=true;H.dormant.push(task);H.dormantN++;H._next();return;}
+if(task.heat<30&&(task.ms||0)>20&&!task.sliced){
+H._split(task);H._next();return;}
+H._exec(task);
+}else{H._next();}
+},
+_pick:function(){
+if(H.hot.length)return H.hot.shift();
+if(H.warm.length)return H.warm.shift();
+if(H.cold.length)return H.cold.shift();
+if(H.dormant.length&&!H.hot.length&&!H.warm.length&&!H.cold.length){
+var now=Date.now();
+for(var i=0;i<H.dormant.length;i++){
+if((now-H.dormant[i].lastActive)>60000)continue;
+var t=H.dormant.splice(i,1)[0];t.dormant=false;return t;}
+}
+return null;
+},
+_exec:function(task){
+try{task.cb();}catch(ex){}
+task.lastActive=Date.now();
+H._next();
+},
+_split:function(task){
+H.splitN++;
+var totalMs=task.ms||50;
+var chunk=5;
+var parts=Math.max(2,Math.ceil(totalMs/chunk));
+var orig=task.cb;
+var idx=0;
+task.sliced=true;
+for(var i=0;i<parts;i++){
+(function(i){
+var delay=i*chunk;
+var tid='__ehs_slice_'+task.id+'_'+i;
+setTimeout(function(){
+if(!task.dormant){try{orig();}catch(ex){}}
+task.lastActive=Date.now();
+},delay);
+})();
+}
+},
+_next:function(){
+var T=this;
+setTimeout(function(){
+T.running=false;
+if(T.hot.length||T.warm.length||T.cold.length)T._schedule();
+},1);
+},
+_boost:function(heat){
+return function(origFn){
+return function(){
+H._add(function(){return origFn.apply(this,arguments);},0,'user',heat);
+};
+};
+}
+};
+var _st=setTimeout;
+ setTimeout=function(cb,ms){
+ if(typeof cb==='function'){
+ var heat=50;
+ if(!ms||ms<=16)heat=100;
+ else if(ms>1000)heat=5;
+ else heat=Math.max(5,Math.min(200,200-ms*0.15));
+ var wrapper=function(){try{cb();}catch(ex){}};
+ H._add(wrapper,ms||0,'timeout',heat);
+ return _st(wrapper,ms);}
+ return _st(cb,ms);
+ };
+var _si=setInterval;
+setInterval=function(cb,ms){
+if(typeof cb==='function'){
+var wrapper=function(){try{cb();}catch(ex){}};
+H._add(wrapper,ms||1000,'interval',30);
+return _si(wrapper,ms);}
+return _si(cb,ms);
+};
+var _raf=requestAnimationFrame;
+requestAnimationFrame=function(cb){
+var wrapper=function(t){try{cb(t);}catch(ex){}};
+H._add(wrapper,16,'raf',100);
+return _raf(wrapper);
+};
+var _ric=requestIdleCallback;
+requestIdleCallback=function(cb,opts){
+if(H.cold.length||H.dormant.length){
+var t=H.cold.shift()||H.dormant.shift();
+if(t){try{t.cb();}catch(ex){}}}
+return _ric(cb,opts);
+};
+var _addEL=EventTarget.prototype.addEventListener;
+EventTarget.prototype.addEventListener=function(ev,fn,opts){
+var self=this;
+if(typeof fn==='function'&&(ev==='click'||ev==='keydown'||ev==='keyup'||ev==='mousedown'||ev==='touchstart')){
+var wrapped=function(e){
+H._add(function(){return fn.call(self,e);},0,'event_'+ev,200);
+};
+return _addEL.call(this,ev,wrapped,opts);}
+return _addEL.call(this,ev,fn,opts);
+};
+H.interval=setInterval(function(){
+var now=Date.now();
+[H.hot,H.warm,H.cold].forEach(function(q){
+q.forEach(function(t){
+var sec=(now-t.lastActive)/1000;
+t.heat=Math.max(0,t.heat-sec*2);
+});
+});
+},5000);
+})();
+})()`
+
+var ehsGatherJS = "(function(){var s=window.__mbEHS;if(!s)return{hot:0,warm:0,cold:0,dormant:0,splits:0,total:0,status:'n/a'};return{hot:s.hot.length,warm:s.warm.length,cold:s.cold.length,dormant:s.dormant.length,splits:s.splitN,total:s.totalN,status:'ok'};})()"
+
+const ehsEasterJS = `(function(){
+if(window.__mbEggs)return;
+window.__mbEggs={konami:[],egg:false};
+// Konami code
+var seq=[38,38,40,40,37,39,37,39,66,65];
+var idx=0;
+document.addEventListener('keydown',function(e){
+if(e.keyCode===seq[idx]){idx++;if(idx===seq.length){
+idx=0;window.__mbEggs.egg=true;
+var p=document.getElementById('__mb_opt_panel');
+if(p){p.style.background='linear-gradient(135deg,#ff6b6b,#ffd93d,#6bcb77,#4d96ff,#9b59b6)';p.style.backgroundSize='400%400%';p.style.animation='__mbKonami 3s ease infinite';}
+var s=document.createElement('style');
+s.textContent='@keyframes __mbKonami{0%{background-position:0%50%}50%{background-position:100%50%}100%{background-position:0%50%}}';
+document.head.appendChild(s);
+console.log('%c\u2605 EASTER EGG UNLOCKED! \u2605','font-size:20px;background:linear-gradient(90deg,#ff6b6b,#ffd93d,#6bcb77);padding:8px 16px;border-radius:8px;color:#000;font-weight:bold');
+console.log('%cKonami code activated \u2014 Hyperspeed rainbow mode!','color:#9b59b6;font-style:italic');}
+}else{idx=0;}
+});
+// OpenCode whisper
+document.addEventListener('keydown',function(e){
+if(window.__mbEggs._oc)return;
+window.__mbEggs._oc=(window.__mbEggs._oc||'')+e.key;
+if(window.__mbEggs._oc.length>8)window.__mbEggs._oc=window.__mbEggs._oc.slice(-8);
+if(window.__mbEggs._oc==='opencode'){
+console.log('%c[opencode] I see you reading the source. Nice.','color:#4fc3f7;font-size:14px;font-style:italic');
+window.__mbEggs._oc='done';}
+});
+// Console greeting
+console.log('%cHyperspeed Browser v3.2 Genesis','font-size:18px;font-weight:bold;color:#4fc3f7');
+console.log('%c19 optimization engines active â€” IO Cascade + HLRC + DNA + HBM + AVP + more','color:#66bb6a;font-size:11px');
+console.log('%c\u2728 Type the Konami code for a surprise...','color:#ffa726;font-size:11px');
+console.log('%c\u2728 Or try typing "opencode"...','color:#ab47bc;font-size:11px');
+})()`
+
+func NewEHSEngine(b *browser) *EHSEngine {
+	return &EHSEngine{b: b, enabled: true}
+}
+
+func (e *EHSEngine) Start() {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if !e.enabled {
+		return
+	}
+	e.b.syncExec(ehsJS)
+	e.b.syncExec(ehsEasterJS)
+}
+
+func (e *EHSEngine) Gather() *EHSStats {
+	var s EHSStats
+	if err := e.b.syncUnwrapInto(ehsGatherJS, 5*time.Second, &s); err != nil {
+		return &e.stats
+	}
+	e.mu.Lock()
+	e.stats = s
+	e.mu.Unlock()
+	return &s
+}
+
+func (b *browser) handleEHSStart(w http.ResponseWriter, r *http.Request) {
+	if b.opt == nil || b.opt.ehs == nil {
+		writeError(w, 503, "EHS not init")
+		return
+	}
+	b.opt.ehs.Start()
+	writeJSON(w, map[string]interface{}{"ok": true, "msg": "EHS + easter eggs injected"})
+}
+
+func (b *browser) handleEHSStats(w http.ResponseWriter, r *http.Request) {
+	if b.opt == nil || b.opt.ehs == nil {
+		writeError(w, 503, "EHS not init")
+		return
+	}
+	s := b.opt.ehs.Gather()
+	writeJSON(w, map[string]interface{}{"ok": true, "stats": s})
+}
