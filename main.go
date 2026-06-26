@@ -2,6 +2,7 @@ package main
 
 import (
 	"crypto/rand"
+	"embed"
 	"encoding/json"
 	"fmt"
 	"image/color"
@@ -9,6 +10,8 @@ import (
 	"net"
 	"net/http"
 	"strings"
+	"sync/atomic"
+	"time"
 
 	ultralightui "github.com/YindSoft/ultralight-ebitengine-port"
 	"github.com/hajimehoshi/ebiten/v2"
@@ -19,6 +22,9 @@ import (
 	"golang.org/x/image/font/opentype"
 )
 
+//go:embed cacert.pem
+var cacert embed.FS
+
 const (
 	navH = 40
 	winW = 1280
@@ -26,66 +32,107 @@ const (
 )
 
 var (
-	colNavBg     = color.RGBA{0xE8, 0xE8, 0xE8, 0xFF}
-	colBorder    = color.RGBA{0xCC, 0xCC, 0xCC, 0xFF}
-	colURLBg     = color.RGBA{0xFF, 0xFF, 0xFF, 0xFF}
-	colURLText   = color.RGBA{0x22, 0x22, 0x22, 0xFF}
-	colPlacehold = color.RGBA{0x99, 0x99, 0x99, 0xFF}
-	colBtn       = color.RGBA{0x44, 0x44, 0x44, 0xFF}
-	colBtnOff    = color.RGBA{0xBB, 0xBB, 0xBB, 0xFF}
-	whitePix     *ebiten.Image
-	navBgImg     *ebiten.Image
-	urlBgImg     *ebiten.Image
+	colNavBg   = color.RGBA{0xE8, 0xE8, 0xE8, 0xFF}
+	colBorder  = color.RGBA{0xCC, 0xCC, 0xCC, 0xFF}
+	colURLBg   = color.RGBA{0xFF, 0xFF, 0xFF, 0xFF}
+	colURLText = color.RGBA{0x22, 0x22, 0x22, 0xFF}
+	colPh      = color.RGBA{0x99, 0x99, 0x99, 0xFF}
+	colBtn     = color.RGBA{0x44, 0x44, 0x44, 0xFF}
+	colDim     = color.RGBA{0xBB, 0xBB, 0xBB, 0xFF}
+	colLoad    = color.RGBA{0x66, 0x99, 0xDD, 0xFF}
+	colBench   = color.RGBA{0x88, 0x88, 0x88, 0xFF}
+
+	ddgHome   = "https://duckduckgo.com/"
+	ddgSearch = "https://duckduckgo.com/?q="
+
+	whitePix *ebiten.Image
 )
 
 func init() {
 	whitePix = ebiten.NewImage(1, 1)
 	whitePix.Fill(color.White)
-	navBgImg = ebiten.NewImage(winW, navH)
-	navBgImg.Fill(colNavBg)
-	urlBgImg = ebiten.NewImage(1, 1)
-	urlBgImg.Fill(colURLBg)
 }
 
 type App struct {
 	ui         *ultralightui.UltralightUI
+	curURL     string
 	urlInput   string
-	urlDisplay string
 	urlFocused bool
-	history    []string
-	histIdx    int
-	navChan    chan string
-	apiPort    int
-	font       font.Face
+	loading    atomic.Bool
+	loadStart  time.Time
+
+	history []string
+	histIdx int
+	navChan chan string
+	apiPort int
+	font    font.Face
+
+	pageOpts ebiten.DrawImageOptions
+	rectOpts ebiten.DrawImageOptions
 }
 
 type Game struct{ app *App }
 
 func main() {
 	app := &App{
-		urlDisplay: "https://www.google.com",
-		history:    []string{},
-		navChan:    make(chan string, 32),
+		curURL:  ddgHome,
+		history: make([]string, 0, 16),
+		navChan: make(chan string, 32),
 	}
+	app.pageOpts.GeoM.Translate(0, navH)
+	app.rectOpts.ColorScale.Scale(1, 1, 1, 1)
 
 	tt, _ := opentype.Parse(goregular.TTF)
 	app.font, _ = opentype.NewFace(tt, &opentype.FaceOptions{Size: 13, DPI: 96})
 
-	ui, err := ultralightui.NewFromURL(winW, winH-navH, app.urlDisplay, nil)
-	if err != nil {
-		log.Fatalf("ui: %v", err)
-	}
-	ui.SetBounds(0, navH, winW, winH-navH)
-	app.ui = ui
-
+	app.spawnView(app.curURL)
 	go app.startAPI()
 
 	ebiten.SetWindowSize(winW, winH)
-	ebiten.SetWindowTitle("Ultra-Browser v4.0.0-ultra")
-	ebiten.SetRunnableOnUnfocused(true)
+	ebiten.SetWindowTitle("Ultra-Browser v4.0.1-ultra")
+	ebiten.SetRunnableOnUnfocused(false)
+	ebiten.SetVsyncEnabled(true)
 	if err := ebiten.RunGame(&Game{app: app}); err != nil {
 		log.Fatal(err)
 	}
+}
+
+func (app *App) setupUI(ui *ultralightui.UltralightUI) {
+	ui.OnMessage = func(msg string) {
+		var m struct {
+			Action string `json:"a"`
+			URL    string `json:"u"`
+		}
+		if json.Unmarshal([]byte(msg), &m) == nil && m.Action == "loaded" {
+			app.loading.Store(false)
+			if m.URL != "" {
+				app.curURL = m.URL
+			}
+		}
+	}
+	ui.Eval(`(function(){
+var r=function(){go.send(JSON.stringify({a:"loaded",u:location.href}))};
+if(document.readyState==='complete'||document.readyState==='interactive')setTimeout(r,50);
+else document.addEventListener('DOMContentLoaded',r);
+})()`)
+	app.ui = ui
+}
+
+func (app *App) spawnView(url string) {
+	if app.ui != nil {
+		app.ui.Close()
+	}
+	ui, err := ultralightui.NewFromURL(winW, winH-navH, url, nil)
+	if err != nil {
+		log.Printf("[NAV] error: %v", err)
+		return
+	}
+	ui.SetBounds(0, navH, winW, winH-navH)
+	app.setupUI(ui)
+	app.curURL = url
+	app.loading.Store(true)
+	app.loadStart = time.Now()
+	log.Printf("[NAV] %s", url)
 }
 
 func (g *Game) Update() error {
@@ -99,11 +146,14 @@ func (g *Game) Update() error {
 		case "__forward__":
 			app.goForward()
 		case "__reload__":
-			app.navigate(app.urlDisplay)
+			app.navigate(app.curURL)
 		default:
 			app.navigate(cmd)
 		}
 	default:
+		if app.loading.Load() && time.Since(app.loadStart) > 3*time.Second {
+			app.loading.Store(false)
+		}
 	}
 
 	if app.ui != nil {
@@ -121,12 +171,8 @@ func (g *Game) Update() error {
 
 func (g *Game) Draw(screen *ebiten.Image) {
 	screen.Fill(color.RGBA{0xF5, 0xF5, 0xF5, 0xFF})
-	if app := g.app; app.ui != nil {
-		if tex := app.ui.GetTexture(); tex != nil {
-			op := &ebiten.DrawImageOptions{}
-			op.GeoM.Translate(0, float64(navH))
-			screen.DrawImage(tex, op)
-		}
+	if tex := g.app.ui.GetTexture(); tex != nil {
+		screen.DrawImage(tex, &g.app.pageOpts)
 	}
 	g.app.drawNavBar(screen)
 }
@@ -137,7 +183,7 @@ func (g *Game) Layout(int, int) (int, int) { return winW, winH }
 
 func (app *App) navigate(raw string) {
 	url := normalizeURL(strings.TrimSpace(raw))
-	if url == "" {
+	if url == "" || url == app.curURL {
 		return
 	}
 	if app.histIdx < len(app.history)-1 {
@@ -149,24 +195,7 @@ func (app *App) navigate(raw string) {
 		app.histIdx -= 50
 	}
 	app.histIdx = len(app.history) - 1
-	app.loadURL(url)
-}
-
-func (app *App) loadURL(url string) {
-	if app.ui != nil {
-		app.ui.Close()
-	}
-	ui, err := ultralightui.NewFromURL(winW, winH-navH, url, nil)
-	if err != nil {
-		log.Printf("[NAV] error: %v", err)
-		return
-	}
-	ui.SetBounds(0, navH, winW, winH-navH)
-	app.ui = ui
-	app.urlDisplay = url
-	app.urlInput = ""
-	app.urlFocused = false
-	log.Printf("[NAV] %s", url)
+	app.spawnView(url)
 }
 
 func (app *App) goBack() {
@@ -174,7 +203,7 @@ func (app *App) goBack() {
 		return
 	}
 	app.histIdx--
-	app.loadURL(app.history[app.histIdx])
+	app.spawnView(app.history[app.histIdx])
 }
 
 func (app *App) goForward() {
@@ -182,13 +211,12 @@ func (app *App) goForward() {
 		return
 	}
 	app.histIdx++
-	app.loadURL(app.history[app.histIdx])
+	app.spawnView(app.history[app.histIdx])
 }
 
 // --- Input ---
 
 func (app *App) handleInput() {
-	// Nav bar click
 	if inpututil.IsMouseButtonJustPressed(ebiten.MouseButtonLeft) {
 		mx, my := ebiten.CursorPosition()
 		if my < navH {
@@ -198,7 +226,6 @@ func (app *App) handleInput() {
 		}
 	}
 
-	// URL bar keyboard
 	if app.urlFocused {
 		for _, r := range ebiten.AppendInputChars(nil) {
 			app.urlInput += string(r)
@@ -218,15 +245,14 @@ func (app *App) handleInput() {
 		return
 	}
 
-	// Global shortcuts
 	if ebiten.IsKeyPressed(ebiten.KeyControl) {
 		if inpututil.IsKeyJustPressed(ebiten.KeyL) {
 			app.urlFocused = true
-			app.urlInput = app.urlDisplay
+			app.urlInput = app.curURL
 			return
 		}
 		if inpututil.IsKeyJustPressed(ebiten.KeyR) {
-			app.navigate(app.urlDisplay)
+			app.navigate(app.curURL)
 			return
 		}
 	}
@@ -239,107 +265,97 @@ func (app *App) handleInput() {
 		}
 	}
 	if inpututil.IsKeyJustPressed(ebiten.KeyF5) {
-		app.navigate(app.urlDisplay)
+		app.navigate(app.curURL)
 	}
 }
 
-func (app *App) handleNavBarClick(mx, my int) {
-	_ = my
-	const (
-		backX = 8
-		btnW  = 24
-		fwdX  = backX + btnW + 8
-		relX  = fwdX + btnW + 8
-		urlX  = relX + btnW + 12
-		urlW  = winW - urlX - 8
-	)
-
-	if mx >= backX && mx < backX+btnW {
+func (app *App) handleNavBarClick(mx, _ int) {
+	const (bX = 8; bW = 24; fX = bX + bW + 8; rX = fX + bW + 8; uX = rX + bW + 12; uW = winW - uX - 8)
+	switch {
+	case mx >= bX && mx < bX+bW:
 		app.goBack()
-		return
-	}
-	if mx >= fwdX && mx < fwdX+btnW {
+	case mx >= fX && mx < fX+bW:
 		app.goForward()
-		return
-	}
-	if mx >= relX && mx < relX+btnW {
-		app.navigate(app.urlDisplay)
-		return
-	}
-	if mx >= urlX && mx < urlX+urlW {
+	case mx >= rX && mx < rX+bW:
+		app.navigate(app.curURL)
+	case mx >= uX && mx < uX+uW:
 		app.urlFocused = true
-		app.urlInput = app.urlDisplay
-	} else {
+		app.urlInput = app.curURL
+	default:
 		app.urlFocused = false
 	}
 }
 
-// --- Nav Bar Rendering ---
+// --- Nav Bar ---
 
 func (app *App) drawNavBar(screen *ebiten.Image) {
-	screen.DrawImage(navBgImg, nil)
-	fillRect(screen, 0, float64(navH-1), winW, 1, colBorder)
+	app.fillRect(screen, 0, 0, winW, navH, colNavBg)
+	app.fillRect(screen, 0, navH-1, winW, 1, colBorder)
 
-	canBack := app.histIdx > 0
-	canFwd := app.histIdx < len(app.history)-1
-
-	drawBtn(screen, 8, "◀", canBack, app.font)
-	drawBtn(screen, 40, "▶", canFwd, app.font)
+	drawBtn(screen, 8, "◀", app.histIdx > 0, app.font)
+	drawBtn(screen, 40, "▶", app.histIdx < len(app.history)-1, app.font)
 	drawBtn(screen, 72, "↻", true, app.font)
 
-	urlX, urlW := 108, winW-116
-	var gm ebiten.GeoM
-	gm.Scale(float64(urlW), float64(navH-12))
-	gm.Translate(float64(urlX), 6)
-	screen.DrawImage(urlBgImg, &ebiten.DrawImageOptions{GeoM: gm})
-	fillRect(screen, float64(urlX), 6, float64(urlW), float64(navH-12), colBorder)
+	uX := 108
+	uW := winW - 116
+	app.fillRect(screen, float64(uX), 6, float64(uW), navH-12, colURLBg)
+	app.fillRect(screen, float64(uX), 6, float64(uW), navH-12, colBorder)
 
-	display := app.urlDisplay
-	if app.urlFocused {
-		display = app.urlInput
-	}
+	display := app.curURL
 	txtCol := colURLText
-	if app.urlFocused && app.urlInput == "" {
-		txtCol = colPlacehold
-		display = "Type URL..."
+	switch {
+	case app.urlFocused:
+		display = app.urlInput
+		if display == "" {
+			display = "Type URL..."
+			txtCol = colPh
+		}
+	case app.loading.Load():
+		display = "⟳ Loading..."
+		txtCol = colLoad
 	}
-	text.Draw(screen, display, app.font, urlX+6, navH-14, txtCol)
+	text.Draw(screen, display, app.font, uX+6, navH-14, txtCol)
+
+	if !app.loading.Load() && !app.loadStart.IsZero() {
+		if d := time.Since(app.loadStart); d < 10*time.Second {
+			bench := fmt.Sprintf("%dms", d.Milliseconds())
+			text.Draw(screen, bench, app.font, uX+uW-len(bench)*8-4, navH-14, colBench)
+		}
+	}
 }
 
 func drawBtn(screen *ebiten.Image, x int, label string, enabled bool, f font.Face) {
 	c := colBtn
 	if !enabled {
-		c = colBtnOff
+		c = colDim
 	}
 	text.Draw(screen, label, f, x, navH-14, c)
 }
 
-func fillRect(screen *ebiten.Image, x, y, w, h float64, cl color.Color) {
+func (app *App) fillRect(screen *ebiten.Image, x, y, w, h float64, cl color.Color) {
 	r, g, b, a := cl.RGBA()
-	op := &ebiten.DrawImageOptions{}
-	op.GeoM.Scale(w, h)
-	op.GeoM.Translate(x, y)
-	op.ColorScale.Scale(float32(r)/65535, float32(g)/65535, float32(b)/65535, float32(a)/65535)
-	screen.DrawImage(whitePix, op)
+	app.rectOpts.GeoM.Reset()
+	app.rectOpts.GeoM.Scale(w, h)
+	app.rectOpts.GeoM.Translate(x, y)
+	app.rectOpts.ColorScale.Reset()
+	app.rectOpts.ColorScale.Scale(float32(r)/65535, float32(g)/65535, float32(b)/65535, float32(a)/65535)
+	screen.DrawImage(whitePix, &app.rectOpts)
 }
 
-// --- URL Normalization ---
+// --- URL ---
 
 func normalizeURL(raw string) string {
 	raw = strings.TrimSpace(raw)
-	if raw == "" {
-		return ""
-	}
-	if raw == "about:blank" {
+	if raw == "" || raw == "about:blank" {
 		return raw
 	}
-	if !strings.HasPrefix(raw, "http://") && !strings.HasPrefix(raw, "https://") && !strings.HasPrefix(raw, "about:") {
-		if strings.Contains(raw, ".") || strings.Contains(raw, "/") || strings.Contains(raw, ":") && !strings.Contains(raw, " ") {
-			return "https://" + raw
-		}
-		return "https://www.google.com/search?q=" + strings.ReplaceAll(raw, " ", "+")
+	if strings.HasPrefix(raw, "http://") || strings.HasPrefix(raw, "https://") || strings.HasPrefix(raw, "about:") {
+		return raw
 	}
-	return raw
+	if strings.Contains(raw, ".") || strings.Contains(raw, "/") || (strings.Contains(raw, ":") && !strings.Contains(raw, " ")) {
+		return "https://" + raw
+	}
+	return ddgSearch + strings.ReplaceAll(raw, " ", "+")
 }
 
 // --- HTTP API ---
@@ -378,41 +394,41 @@ func cors(next http.Handler) http.Handler {
 
 func (app *App) apiNavigate(w http.ResponseWriter, r *http.Request) {
 	if r.Method != "POST" {
-		json.NewEncoder(w).Encode(map[string]interface{}{"ok": false, "error": "POST required"})
+		json.NewEncoder(w).Encode(map[string]any{"ok": false, "error": "POST required"})
 		return
 	}
 	var b struct{ URL string }
 	json.NewDecoder(r.Body).Decode(&b)
 	app.navChan <- b.URL
-	json.NewEncoder(w).Encode(map[string]interface{}{"ok": true, "url": b.URL})
+	json.NewEncoder(w).Encode(map[string]any{"ok": true, "url": b.URL})
 }
 
-func (app *App) apiBack(w http.ResponseWriter, r *http.Request) {
+func (app *App) apiBack(w http.ResponseWriter, _ *http.Request) {
 	app.navChan <- "__back__"
 	json.NewEncoder(w).Encode(map[string]bool{"ok": true})
 }
 
-func (app *App) apiForward(w http.ResponseWriter, r *http.Request) {
+func (app *App) apiForward(w http.ResponseWriter, _ *http.Request) {
 	app.navChan <- "__forward__"
 	json.NewEncoder(w).Encode(map[string]bool{"ok": true})
 }
 
-func (app *App) apiReload(w http.ResponseWriter, r *http.Request) {
+func (app *App) apiReload(w http.ResponseWriter, _ *http.Request) {
 	app.navChan <- "__reload__"
 	json.NewEncoder(w).Encode(map[string]bool{"ok": true})
 }
 
-func (app *App) apiInfo(w http.ResponseWriter, r *http.Request) {
-	json.NewEncoder(w).Encode(map[string]interface{}{
+func (app *App) apiInfo(w http.ResponseWriter, _ *http.Request) {
+	json.NewEncoder(w).Encode(map[string]any{
 		"ok":    true,
-		"url":   app.urlDisplay,
-		"title": app.urlDisplay,
+		"url":   app.curURL,
+		"title": app.curURL,
 	})
 }
 
 func (app *App) apiEval(w http.ResponseWriter, r *http.Request) {
 	if r.Method != "POST" {
-		json.NewEncoder(w).Encode(map[string]interface{}{"ok": false, "error": "POST required"})
+		json.NewEncoder(w).Encode(map[string]any{"ok": false, "error": "POST required"})
 		return
 	}
 	var b struct{ JS string }
